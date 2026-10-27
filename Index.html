@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>공지 할 일</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --card: #fffdf8; --ink: #1f1d1a; --sub: #6f6a61; --line: #e4dfd4;
+    --late: #b3261e; --soon: #a15c00; --tag: #ece7dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161513; --card: #1f1e1b; --ink: #ece8df; --sub: #9a948a; --line: #2e2c28;
+            --late: #f2867e; --soon: #e0a24f; --tag: #2a2824; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+  header { padding: 20px 16px 8px; display: flex; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.02em; }
+  .meta { color: var(--sub); font-size: 12px; }
+  button.ref { border: 1px solid var(--line); background: var(--card); color: var(--ink);
+               border-radius: 8px; padding: 4px 10px; font-size: 13px; }
+  section { padding: 4px 16px 8px; }
+  h2 { font-size: 13px; color: var(--sub); font-weight: 600; margin: 16px 0 6px; }
+  h2.late { color: var(--late); }
+  .item { display: flex; gap: 12px; padding: 12px; background: var(--card);
+          border: 1px solid var(--line); border-radius: 10px; margin-bottom: 6px; }
+  .item input { width: 20px; height: 20px; margin-top: 2px; flex: none; accent-color: var(--ink); }
+  .title { font-weight: 600; }
+  .done .title { text-decoration: line-through; color: var(--sub); }
+  .line2 { font-size: 13px; color: var(--sub); margin-top: 2px; }
+  .d { font-weight: 700; }
+  .d.late { color: var(--late); } .d.soon { color: var(--soon); }
+  .room { background: var(--tag); border-radius: 4px; padding: 0 5px; font-size: 12px; }
+  .detail { font-size: 13px; margin-top: 4px; white-space: pre-wrap; }
+  .msg { color: var(--sub); padding: 32px 16px; text-align: center; }
+  .msg input { width: 100%; margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font-size: 15px; }
+  .msg button { margin-top: 8px; width: 100%; padding: 10px; border: 0; border-radius: 8px; background: var(--ink); color: var(--bg); font-size: 15px; }
+  .empty { color: var(--sub); padding: 32px 16px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>해야 할 일</h1>
+    <div class="meta" id="meta">불러오는 중…</div>
+  </div>
+  <button class="ref" onclick="refresh()">새로고침</button>
+</header>
+<main id="list"></main>
+
+<script>
+  // ▼ Apps Script 웹 앱 URL (…/exec 로 끝나는 주소). 토큰은 여기 적지 마세요.
+  var API = 'https://script.google.com/macros/s/여기에-배포ID/exec';
+
+  var WD = ['일','월','화','수','목','금','토'];
+  var DATA = { tasks: [], now: '', lastMessage: '' };
+  var TOKEN = loadToken();
+
+  function loadToken() {
+    var m = /[#&]k=([^&]+)/.exec(location.hash);
+    var t = m ? decodeURIComponent(m[1]) : '';
+    try {
+      if (t) { localStorage.setItem('notice_token', t); history.replaceState(null, '', location.pathname); }
+      else t = localStorage.getItem('notice_token') || '';
+    } catch (e) {}
+    return t;
+  }
+
+  function dayStart(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function parseDue(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?/.exec(s || '');
+    if (!m) return null;
+    return { date: new Date(+m[1], m[2] - 1, +m[3], m[4] ? +m[4] : 23, m[5] ? +m[5] : 59),
+             hasTime: !!m[4], hm: m[4] ? m[4] + ':' + m[5] : '' };
+  }
+  function esc(s) { return String(s || '').replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  function render() {
+    var today = dayStart(new Date());
+    var groups = { late: [], today: [], tomorrow: [], week: [], later: [], none: [], done: [] };
+    DATA.tasks.forEach(function (t) {
+      var due = parseDue(t.due);
+      t._due = due;
+      if (t.status === 'done') return groups.done.push(t);
+      if (!due) return groups.none.push(t);
+      var diff = Math.round((dayStart(due.date) - today) / 864e5);
+      t._diff = diff;
+      if (due.date < new Date()) groups.late.push(t);
+      else if (diff === 0) groups.today.push(t);
+      else if (diff === 1) groups.tomorrow.push(t);
+      else if (diff <= 7) groups.week.push(t);
+      else groups.later.push(t);
+    });
+    Object.keys(groups).forEach(function (k) {
+      groups[k].sort(function (a, b) {
+        return (a._due ? a._due.date : 9e15) - (b._due ? b._due.date : 9e15);
+      });
+    });
+
+    var labels = [['late', '마감 지남'], ['today', '오늘'], ['tomorrow', '내일'], ['week', '이번 주'],
+                  ['later', '그 이후'], ['none', '날짜 미정'], ['done', '최근 완료']];
+    var html = '';
+    labels.forEach(function (l) {
+      var arr = groups[l[0]];
+      if (!arr.length) return;
+      html += '<section><h2 class="' + (l[0] === 'late' ? 'late' : '') + '">' + l[1] + ' · ' + arr.length + '</h2>';
+      arr.forEach(function (t) { html += itemHtml(t); });
+      html += '</section>';
+    });
+    document.getElementById('list').innerHTML = html || '<div class="empty">정리된 할 일이 없습니다.</div>';
+    document.getElementById('meta').textContent =
+      '마지막 공지 ' + (DATA.lastMessage || '-') + ' · 갱신 ' + DATA.now.slice(5);
+  }
+
+  function itemHtml(t) {
+    var line = '';
+    if (t._due) {
+      var d = t._due.date;
+      var dlabel = t._diff === 0 ? 'D-day' : (t._diff > 0 ? 'D-' + t._diff : 'D+' + (-t._diff));
+      var cls = t.status === 'done' ? '' : (d < new Date() ? 'late' : (t._diff <= 2 ? 'soon' : ''));
+      line += '<span class="d ' + cls + '">' + dlabel + '</span> · ' + (d.getMonth() + 1) + '/' + d.getDate() +
+              ' (' + WD[d.getDay()] + ')' + (t._due.hasTime ? ' ' + t._due.hm : '') + ' · ';
+    }
+    line += '<span class="room">' + esc(t.room) + '</span>';
+    return '<div class="item ' + (t.status === 'done' ? 'done' : '') + '">' +
+      '<input type="checkbox" ' + (t.status === 'done' ? 'checked' : '') +
+      ' onchange="toggle(\'' + esc(t.id) + '\', this.checked)">' +
+      '<div><div class="title">' + esc(t.title) + '</div>' +
+      '<div class="line2">' + line + '</div>' +
+      (t.detail ? '<div class="detail">' + esc(t.detail) + '</div>' : '') + '</div></div>';
+  }
+
+  function showMsg(html) {
+    document.getElementById('list').innerHTML = '<div class="msg">' + html + '</div>';
+  }
+
+  function askToken(reason) {
+    document.getElementById('meta').textContent = '';
+    showMsg((reason ? esc(reason) + '<br>' : '') + '토큰을 입력하세요.' +
+      '<input id="tk" type="password" autocomplete="off"><button onclick="saveToken()">확인</button>');
+  }
+
+  function saveToken() {
+    TOKEN = document.getElementById('tk').value.trim();
+    try { localStorage.setItem('notice_token', TOKEN); } catch (e) {}
+    refresh();
+  }
+
+  function refresh() {
+    if (!TOKEN) return askToken('');
+    document.getElementById('meta').textContent = '불러오는 중…';
+    fetch(API + '?format=json&k=' + encodeURIComponent(TOKEN), { credentials: 'omit' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) {
+          try { localStorage.removeItem('notice_token'); } catch (e) {}
+          TOKEN = '';
+          return askToken('토큰이 맞지 않습니다.');
+        }
+        DATA = d; render();
+      })
+      .catch(function () {
+        document.getElementById('meta').textContent = '불러오기 실패 · 네트워크나 API 주소를 확인하세요';
+      });
+  }
+
+  function toggle(id, done) {
+    DATA.tasks.forEach(function (t) { if (t.id === id) t.status = done ? 'done' : 'open'; });
+    render();
+    fetch(API, {
+      method: 'POST', credentials: 'omit',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: TOKEN, type: 'done', id: id, done: done })
+    }).then(function (r) { return r.json(); })
+      .then(function (d) { if (!d.ok) throw 0; })
+      .catch(function () { alert('저장 실패. 새로고침 후 다시 시도해 주세요.'); refresh(); });
+  }
+
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && TOKEN) refresh(); });
+  refresh();
+</script>
+</body>
+</html>
