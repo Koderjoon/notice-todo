@@ -38,6 +38,7 @@
   .time .none { color: var(--sub); }
   .room { display: inline-block; background: var(--tag); border-radius: 4px; padding: 0 5px; font-size: 12px; margin-top: 4px; }
   .detail { font-size: 13px; color: var(--sub); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+  .note { margin: 0 16px; font-size: 12px; color: var(--sub); }
   .msg { color: var(--sub); padding: 32px 16px; text-align: center; }
   .msg input { width: 100%; margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px;
                background: var(--card); color: var(--ink); font-size: 15px; }
@@ -53,10 +54,11 @@
   </div>
   <button class="ref" onclick="refresh()">새로고침</button>
 </header>
+<p class="note">카톡 공지를 AI가 자동으로 정리한 목록입니다. 빠지거나 틀릴 수 있으니 중요한 건 꼭 원문 공지를 확인하세요.</p>
 <main id="list"></main>
 
 <script>
-  // ▼ Apps Script 웹 앱 URL (…/exec 로 끝나는 주소). 토큰은 여기 적지 마세요.
+  // ▼ Apps Script 웹 앱 URL (…/exec 로 끝나는 주소). 키는 여기 적지 마세요.
   var API = 'https://script.google.com/macros/s/AKfycbwV4-pQIdQhIK7ilUkS4BbISE3cFawFfNti94umZ1D71OKmgHQKrtyTRakSFYAA9HJm/exec';
 
   var WD = ['일','월','화','수','목','금','토'];
@@ -131,7 +133,7 @@
 
   function askToken(reason) {
     document.getElementById('meta').textContent = '';
-    showMsg((reason ? esc(reason) + '<br>' : '') + '토큰을 입력하세요.' +
+    showMsg((reason ? esc(reason) + '<br>' : '') + '보기 키를 입력하세요.' +
       '<input id="tk" type="password" autocomplete="off"><button onclick="saveToken()">확인</button>');
   }
 
@@ -150,7 +152,7 @@
         if (!d.ok) {
           try { localStorage.removeItem('notice_token'); } catch (e) {}
           TOKEN = '';
-          return askToken('토큰이 맞지 않습니다.');
+          return askToken('보기 키가 맞지 않습니다.');
         }
         DATA = d; render();
       })
