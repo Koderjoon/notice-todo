@@ -69,6 +69,28 @@
   .panel .foot { display: flex; gap: 8px; margin-top: 16px; }
   .panel .foot button { flex: 1; padding: 10px; font-size: 15px; }
   .err { color: var(--hot); font-size: 13px; margin-top: 8px; min-height: 1em; }
+
+  /* 탭 */
+  .tabs { display: flex; gap: 6px; margin: 10px 16px 0; }
+  .tabs button { flex: 1; padding: 8px; border: 1px solid var(--line); background: var(--card); color: var(--sub);
+                 border-radius: 8px; font-size: 14px; font-weight: 600; }
+  .tabs button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+  /* 실습 준비물 */
+  .day { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 8px; }
+  .dayhead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .dayhead .dt { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+  .dayhead .dd { margin: 0; }
+  .subj { padding: 8px 0; border-top: 1px dashed var(--line); }
+  .subj:first-of-type { border-top: 0; }
+  .subjname { font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .subjname button { border: 1px solid var(--line); background: transparent; color: var(--sub); border-radius: 6px; padding: 1px 8px; font-size: 12px; }
+  .sup { margin-top: 4px; font-size: 14px; }
+  .sup .k { display: inline-block; font-size: 11px; border-radius: 4px; padding: 0 5px; margin-right: 6px; background: var(--tag); color: var(--sub); }
+  .sup .k.once { color: var(--warm); }
+  .sup .sd { font-size: 12px; color: var(--sub); margin-left: 2px; }
+  .sup .acts { margin-top: 4px; }
+  .none2 { font-size: 13px; color: var(--sub); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -78,12 +100,16 @@
     <div class="meta" id="meta">불러오는 중…</div>
   </div>
   <div class="btns">
-    <button class="solid" id="addBtn" style="display:none" onclick="openEdit(null)">＋ 추가</button>
+    <button class="solid" id="addBtn" style="display:none" onclick="TAB === 'sup' ? openSup(null) : openEdit(null)">＋ 추가</button>
     <button class="ghost" onclick="refresh()">새로고침</button>
   </div>
 </header>
 <p class="note">카톡 공지를 AI가 자동으로 정리한 목록입니다. 빠지거나 틀릴 수 있으니 중요한 건 꼭 원문 공지를 확인하세요.</p>
 <div class="adminbar" id="adminbar" style="display:none">관리자 모드 · 고치거나 지운 내용은 다음 정리 때도 유지됩니다</div>
+<div class="tabs">
+  <button id="tabTasks" onclick="setTab('tasks')">마감 일정</button>
+  <button id="tabSup" onclick="setTab('sup')">실습 준비물</button>
+</div>
 <main id="list"></main>
 
 <div class="sheet" id="sheet" onclick="if(event.target===this)closeEdit()">
@@ -107,14 +133,42 @@
   </div>
 </div>
 
+<div class="sheet" id="ssheet" onclick="if(event.target===this)closeSup()">
+  <div class="panel">
+    <h3 id="sTitle">준비물 추가</h3>
+    <label>과목</label>
+    <select id="sSubject"></select>
+    <label>날짜 (비워두면 매 실습마다 챙길 것)</label>
+    <input id="sDate" type="date">
+    <label>준비물 (쉼표로 구분)</label>
+    <input id="sItems" maxlength="300" placeholder="예: 러버댐 키트, 핸드피스, 실습 가운">
+    <label>메모</label>
+    <textarea id="sDetail" maxlength="300"></textarea>
+    <div class="err" id="sErr"></div>
+    <div class="foot">
+      <button class="ghost" onclick="closeSup()">취소</button>
+      <button class="solid" id="sSave" onclick="saveSup()">저장</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // ▼ Apps Script 웹 앱 URL (…/exec 로 끝나는 주소). 키는 여기 적지 마세요.
   var API = 'https://script.google.com/macros/s/AKfycbwRnmj7_C7Mlq-0Uri6XcN0SsqzL8szjj2dDTQnDit8xUXj3_prZ7CITfMX6cgBE40p/exec';
 
   var WD = ['일','월','화','수','목','금','토'];
-  var DATA = { tasks: [], rooms: [] };
+  var DATA = { tasks: [], rooms: [], supplies: [], labs: {} };
   var KEY = loadKey();
-  var editing = null;
+  var editing = null, sEditing = null;
+  var TAB = 'tasks';
+  try { TAB = localStorage.getItem('dday_tab') || 'tasks'; } catch (e) {}
+
+  function setTab(t) {
+    TAB = t;
+    try { localStorage.setItem('dday_tab', t); } catch (e) {}
+    render();
+  }
+  function ymd(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 
   function loadKey() {
     var m = /[#&]k=([^&]+)/.exec(location.hash) || /[?&]k=([^&]+)/.exec(location.search);
@@ -139,6 +193,14 @@
   }
 
   function render() {
+    document.getElementById('tabTasks').className = TAB === 'tasks' ? 'on' : '';
+    document.getElementById('tabSup').className = TAB === 'sup' ? 'on' : '';
+    document.getElementById('meta').textContent =
+      '마지막 정리 ' + (DATA.lastSync ? DATA.lastSync.slice(5) : '-');
+    document.getElementById('addBtn').style.display = DATA.admin ? '' : 'none';
+    document.getElementById('addBtn').textContent = TAB === 'sup' ? '＋ 준비물' : '＋ 일정';
+    document.getElementById('adminbar').style.display = DATA.admin ? '' : 'none';
+    if (TAB === 'sup') return renderSup();
     var now = new Date(), today = dayStart(now);
     var groups = { today: [], tomorrow: [], week: [], later: [] };
     DATA.tasks.forEach(function (t) {
@@ -160,10 +222,81 @@
       html += '</section>';
     });
     document.getElementById('list').innerHTML = html || '<div class="msg">다가오는 일정이 없습니다.</div>';
-    document.getElementById('meta').textContent =
-      '마지막 정리 ' + (DATA.lastSync ? DATA.lastSync.slice(5) : '-');
-    document.getElementById('addBtn').style.display = DATA.admin ? '' : 'none';
-    document.getElementById('adminbar').style.display = DATA.admin ? '' : 'none';
+  }
+
+  /* ---------- 실습 준비물 ---------- */
+  function renderSup() {
+    var now = new Date(), today = dayStart(now);
+    var labs = DATA.labs || {}, sup = DATA.supplies || [];
+    var days = [];
+    for (var i = 0; i < 14 && days.length < 5; i++) {
+      var d = new Date(today.getTime() + i * 864e5);
+      if (i === 0 && now.getHours() >= 18) continue;          // 저녁엔 오늘 실습은 지난 것으로
+      var key = ymd(d);
+      var subs = (labs[d.getDay()] || []).slice();
+      sup.forEach(function (x) { if (x.date === key && subs.indexOf(x.subject) === -1) subs.push(x.subject); });
+      if (subs.length) days.push({ d: d, key: key, diff: i, subs: subs });
+    }
+    var html = '<section><h2>다가오는 실습 · 공지된 준비물</h2>';
+    days.forEach(function (day) {
+      var dd = day.diff === 0 ? '오늘' : day.diff === 1 ? '내일' : 'D-' + day.diff;
+      var cls = day.diff === 0 ? 'hot' : day.diff === 1 ? 'warm' : '';
+      html += '<div class="day"><div class="dayhead"><span class="dt">' + (day.d.getMonth() + 1) + '/' + day.d.getDate() +
+              ' (' + WD[day.d.getDay()] + ')</span><span class="dd ' + cls + '">' + dd + '</span></div>';
+      day.subs.forEach(function (s) {
+        var mine = sup.filter(function (x) { return x.subject === s && x.date === day.key; })
+          .concat(sup.filter(function (x) { return x.subject === s && !x.date; }));
+        html += '<div class="subj"><div class="subjname"><span>' + esc(s) + ' 실습</span>' +
+                (DATA.admin ? '<button onclick="openSup(null,\'' + esc(s) + '\',\'' + day.key + '\')">＋</button>' : '') + '</div>';
+        if (!mine.length) html += '<div class="none2">공지된 준비물 없음</div>';
+        mine.forEach(function (x) {
+          html += '<div class="sup"><span class="k ' + (x.date ? 'once' : '') + '">' + (x.date ? '이번' : '매번') + '</span>' +
+                  esc(x.items) + (x.manual ? ' <span class="tag mine">직접 입력</span>' : '') +
+                  (x.detail ? '<div class="sd">' + esc(x.detail) + '</div>' : '') +
+                  (DATA.admin ? '<div class="acts"><button onclick="openSup(\'' + esc(x.id) + '\')">수정</button>' +
+                                '<button onclick="delSup(\'' + esc(x.id) + '\')">삭제</button></div>' : '') + '</div>';
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+    html += '</section>';
+    document.getElementById('list').innerHTML = days.length ? html : '<div class="msg">다가오는 실습이 없습니다.</div>';
+  }
+
+  function allSubjects() {
+    var out = [], labs = DATA.labs || {};
+    Object.keys(labs).forEach(function (k) { labs[k].forEach(function (s) { if (out.indexOf(s) === -1) out.push(s); }); });
+    return out;
+  }
+
+  function openSup(id, subject, date) {
+    sEditing = id ? (DATA.supplies || []).filter(function (x) { return x.id === id; })[0] : null;
+    var subj = sEditing ? sEditing.subject : (subject || '');
+    document.getElementById('sTitle').textContent = sEditing ? '준비물 수정' : '준비물 추가';
+    document.getElementById('sSubject').innerHTML = allSubjects().map(function (s) {
+      return '<option' + (s === subj ? ' selected' : '') + '>' + esc(s) + '</option>';
+    }).join('');
+    document.getElementById('sDate').value = sEditing ? (sEditing.date || '') : (date || '');
+    document.getElementById('sItems').value = sEditing ? sEditing.items : '';
+    document.getElementById('sDetail').value = sEditing ? sEditing.detail : '';
+    document.getElementById('sErr').textContent = '';
+    document.getElementById('ssheet').classList.add('on');
+  }
+  function closeSup() { document.getElementById('ssheet').classList.remove('on'); sEditing = null; }
+
+  function saveSup() {
+    var items = document.getElementById('sItems').value.trim();
+    if (!items) { document.getElementById('sErr').textContent = '준비물을 입력하세요.'; return; }
+    post({ type: sEditing ? 'sedit' : 'sadd', id: sEditing ? sEditing.id : '',
+           subject: document.getElementById('sSubject').value, date: document.getElementById('sDate').value,
+           items: items, detail: document.getElementById('sDetail').value.trim() }, 'sup');
+  }
+
+  function delSup(id) {
+    var x = (DATA.supplies || []).filter(function (y) { return y.id === id; })[0];
+    if (!x || !confirm(x.subject + ' 준비물 "' + x.items + '"을(를) 지울까요?\n다음 정리 때도 다시 나타나지 않습니다.')) return;
+    post({ type: 'sdelete', id: id }, false);
   }
 
   function itemHtml(t) {
@@ -213,7 +346,7 @@
     var room = document.getElementById('fRoom').value;
     post({ type: editing ? 'edit' : 'add', id: editing ? editing.id : '', title: title,
            due: date + (time ? ' ' + time : ''), room: room === '기타' ? '' : room,
-           detail: document.getElementById('fDetail').value.trim() }, true);
+           detail: document.getElementById('fDetail').value.trim() }, 'task');
   }
 
   function del(id) {
@@ -224,18 +357,19 @@
 
   function post(body, fromSheet) {
     body.token = KEY;
-    var btn = document.getElementById('fSave');
+    var btn = document.getElementById(fromSheet === 'sup' ? 'sSave' : 'fSave');
+    var errEl = document.getElementById(fromSheet === 'sup' ? 'sErr' : 'fErr');
     btn.disabled = true; btn.textContent = '저장 중…';
     fetch(API, { method: 'POST', credentials: 'omit',
                  headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d.ok) throw new Error(d.error || '저장 실패');
-        if (fromSheet) closeEdit();
+        if (fromSheet === 'sup') closeSup(); else if (fromSheet) closeEdit();
         refresh();
       })
       .catch(function (e) {
-        if (fromSheet) document.getElementById('fErr').textContent = e.message || '저장 실패';
+        if (fromSheet) errEl.textContent = e.message || '저장 실패';
         else alert(e.message || '삭제 실패');
       })
       .then(function () { btn.disabled = false; btn.textContent = '저장'; });
@@ -279,7 +413,7 @@
     if (/[#&]k=/.test(location.hash)) { KEY = loadKey(); DATA = { tasks: [], rooms: [] }; refresh(); }
   });
   document.addEventListener('visibilitychange', function () { if (!document.hidden && KEY) refresh(); });
-  setInterval(function () { if (!document.hidden && KEY && !editing) render(); }, 60000);   // 지난 항목 자동으로 빠짐
+  setInterval(function () { if (!document.hidden && KEY && !editing && !sEditing) render(); }, 60000);   // 지난 항목 자동으로 빠짐
   refresh();
 </script>
 </body>

@@ -1,0 +1,57 @@
+# apps-script/ 폴더가 바뀌면 구글 Apps Script에 자동으로 붙여넣고 같은 주소로 새 버전 배포
+name: Apps Script 자동 배포
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps-script/**'
+      - '.github/workflows/deploy-apps-script.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: apps-script-deploy
+  cancel-in-progress: false
+
+env:
+  # 웹 앱 주소(…/macros/s/<배포 ID>/exec)의 배포 ID — 이 배포를 새 버전으로 갱신하므로 주소가 바뀌지 않음
+  DEPLOYMENT_ID: AKfycbwRnmj7_C7Mlq-0Uri6XcN0SsqzL8szjj2dDTQnDit8xUXj3_prZ7CITfMX6cgBE40p
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 준비 상태 확인
+        id: check
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if grep -q SCRIPT_ID_PLACEHOLDER apps-script/.clasp.json; then
+            echo "::warning::apps-script/.clasp.json 에 스크립트 ID가 아직 없습니다. 배포를 건너뜁니다."
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "$CLASPRC_JSON" ]; then
+            echo "::warning::저장소 Secrets에 CLASPRC_JSON 이 없습니다. 배포를 건너뜁니다."
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: 코드 올리기 (clasp push)
+        if: steps.check.outputs.ready == 'true'
+        working-directory: apps-script
+        run: npx --yes @google/clasp@2.4.2 push --force
+
+      - name: 같은 주소로 새 버전 배포 (clasp deploy)
+        if: steps.check.outputs.ready == 'true'
+        working-directory: apps-script
+        run: |
+          npx --yes @google/clasp@2.4.2 deploy \
+            --deploymentId "$DEPLOYMENT_ID" \
+            --description "auto ${GITHUB_SHA::7}"
