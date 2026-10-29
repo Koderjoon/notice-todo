@@ -6,8 +6,9 @@
  *  - 관리자(TOKEN)는 목록 페이지에서 직접 추가·수정·삭제 → 다시 만들어도 유지
  *  - 학급(VIEW_KEY)은 보기만
  *
- *  ※ 이 파일은 GitHub(koderjoon/notice-todo)의 apps-script/Code.gs에서 자동 배포됩니다.
- *    Apps Script 편집기에서 직접 고치면 다음 배포 때 덮어써지니, 고칠 내용은 GitHub에서.
+ *  ※ 이 파일은 GitHub(Koderjoon/notice-todo)의 apps-script/ 폴더에서 자동으로 가져옵니다.
+ *    10분마다 GitHub를 확인해 바뀌었으면 스스로 코드를 교체하고 같은 주소로 새 버전 배포.
+ *    Apps Script 편집기에서 직접 고치면 다음 업데이트 때 덮어써지니, 고칠 내용은 GitHub에서.
  *  ※ 비밀값은 코드에 두지 않고 [프로젝트 설정 → 스크립트 속성]에 둡니다:
  *    TOKEN(관리자 키), VIEW_KEY(학급 보기 키), GEMINI_API_KEY (또는 ANTHROPIC_API_KEY)
  ******************************************************/
@@ -29,6 +30,9 @@ const CONFIG = {
     5: ['총의치학', '교정학'],
   },
   BATCH: 40,                 // 한 번에 AI에 넘길 메시지 수
+  // 자동 업데이트: 이 저장소의 apps-script/ 폴더를 가져와 아래 배포(웹 앱 주소)를 갱신
+  GITHUB_RAW: 'https://raw.githubusercontent.com/Koderjoon/notice-todo/main/apps-script/',
+  DEPLOYMENT_ID: 'AKfycbwRnmj7_C7Mlq-0Uri6XcN0SsqzL8szjj2dDTQnDit8xUXj3_prZ7CITfMX6cgBE40p',
 };
 
 const TZ = 'Asia/Seoul';
@@ -49,10 +53,11 @@ function setup() {
   getExportFolder_();
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('processExports').timeBased().everyHours(1).create();
+  ScriptApp.newTrigger('updateFromGitHub').timeBased().everyMinutes(10).create();
   ['TOKEN', 'VIEW_KEY'].forEach(function (k) {
     if (!secret_(k)) console.warn('스크립트 속성에 ' + k + ' 가 없습니다. 프로젝트 설정 → 스크립트 속성에서 추가하세요.');
   });
-  console.log('설정 완료: 1시간마다 내보내기 폴더를 확인합니다.');
+  console.log('설정 완료: 1시간마다 내보내기 폴더를, 10분마다 GitHub 업데이트를 확인합니다.');
 }
 
 /* 설치 확인용: 가짜 공지로 AI 추출만 해보고 저장은 하지 않음 */
@@ -60,6 +65,54 @@ function testSample() {
   const msgs = [{ i: 0, room: CONFIG.ROOMS[0], sender: '조교', time: fmt_(new Date()),
     text: '[공지] 다음 주 화요일 오후 1시 보존 실습 있습니다. 러버댐 키트 지참, 실습 보고서는 이번 주 금요일 18시까지 이클래스 제출 바랍니다. 그리고 엔도 실습은 앞으로 매번 K-file 세트와 확대경 챙겨오세요.' }];
   console.log(JSON.stringify(callLLM_(buildPrompt_([], msgs, [])), null, 2));
+}
+
+/* ---------- GitHub에서 최신 코드 가져와 스스로 배포 ---------- */
+function updateFromGitHub() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return;
+  try {
+    const bust = '?t=' + Date.now();
+    const get = function (name) {
+      const r = UrlFetchApp.fetch(CONFIG.GITHUB_RAW + name + bust, { muteHttpExceptions: true });
+      if (r.getResponseCode() !== 200) throw new Error(name + ' 가져오기 실패: ' + r.getResponseCode());
+      return r.getContentText('UTF-8');
+    };
+    const code = get('Code.gs');
+    const manifest = get('appsscript.json');
+    if (code.indexOf('function doGet') === -1 || code.indexOf('function updateFromGitHub') === -1) {
+      throw new Error('가져온 Code.gs가 올바르지 않아 업데이트를 건너뜁니다.');
+    }
+    JSON.parse(manifest);
+    const hash = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, code + '\n' + manifest, Utilities.Charset.UTF_8));
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty('deployedHash') === hash) { console.log('이미 최신입니다.'); return; }
+
+    const id = ScriptApp.getScriptId();
+    const api = function (method, path, body) {
+      const r = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + id + path, {
+        method: method, contentType: 'application/json', muteHttpExceptions: true,
+        headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+        payload: body ? JSON.stringify(body) : undefined
+      });
+      if (r.getResponseCode() >= 300) throw new Error(method + ' ' + path + ' → ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 300));
+      return JSON.parse(r.getContentText() || '{}');
+    };
+    api('put', '/content', { files: [
+      { name: 'appsscript', type: 'JSON', source: manifest },
+      { name: 'Code', type: 'SERVER_JS', source: code }
+    ] });
+    const ver = api('post', '/versions', { description: 'GitHub 자동 업데이트 ' + fmt_(new Date()) });
+    api('put', '/deployments/' + CONFIG.DEPLOYMENT_ID, { deploymentConfig: {
+      scriptId: id, versionNumber: ver.versionNumber, manifestFileName: 'appsscript',
+      description: 'GitHub 자동 업데이트 v' + ver.versionNumber
+    } });
+    props.setProperty('deployedHash', hash);
+    CacheService.getScriptCache().remove('page');
+    console.log('업데이트 완료: 버전 ' + ver.versionNumber + ' 배포');
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ---------- 관리자 편집 (목록 페이지에서 호출) ---------- */
