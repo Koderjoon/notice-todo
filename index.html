@@ -10,11 +10,11 @@
 <style>
   :root {
     --bg: #f6f4ef; --card: #fffdf8; --ink: #1f1d1a; --sub: #6f6a61; --line: #e4dfd4;
-    --hot: #b3261e; --warm: #a15c00; --tag: #ece7dc;
+    --hot: #b3261e; --warm: #a15c00; --tag: #ece7dc; --mine: #2f5d50;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #161513; --card: #1f1e1b; --ink: #ece8df; --sub: #9a948a; --line: #2e2c28;
-            --hot: #f2867e; --warm: #e0a24f; --tag: #2a2824; }
+            --hot: #f2867e; --warm: #e0a24f; --tag: #2a2824; --mine: #8cc4b0; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -22,8 +22,12 @@
   header { padding: 20px 16px 8px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
   h1 { font-size: 20px; margin: 0; letter-spacing: -0.02em; }
   .meta { color: var(--sub); font-size: 12px; }
-  button.ref { border: 1px solid var(--line); background: var(--card); color: var(--ink);
-               border-radius: 8px; padding: 4px 10px; font-size: 13px; flex: none; }
+  .btns { display: flex; gap: 6px; flex: none; }
+  button.ghost { border: 1px solid var(--line); background: var(--card); color: var(--ink);
+                 border-radius: 8px; padding: 4px 10px; font-size: 13px; }
+  button.solid { border: 0; background: var(--ink); color: var(--bg); border-radius: 8px; padding: 5px 11px; font-size: 13px; }
+  .note { margin: 0 16px; font-size: 12px; color: var(--sub); }
+  .adminbar { margin: 8px 16px 0; font-size: 12px; color: var(--mine); }
   section { padding: 4px 16px 8px; }
   h2 { font-size: 13px; color: var(--sub); font-weight: 600; margin: 16px 0 6px; }
   .item { display: flex; gap: 14px; padding: 12px; background: var(--card);
@@ -33,19 +37,38 @@
   .wd { font-size: 12px; color: var(--sub); }
   .dd { display: inline-block; margin-top: 4px; font-size: 12px; font-weight: 700; }
   .hot { color: var(--hot); } .warm { color: var(--warm); }
-  .body { min-width: 0; }
+  .body { min-width: 0; flex: 1; }
   .title { font-weight: 600; }
   .time { font-size: 14px; margin-top: 2px; }
   .time b { font-weight: 700; }
   .time .none { color: var(--sub); }
-  .room { display: inline-block; background: var(--tag); border-radius: 4px; padding: 0 5px; font-size: 12px; margin-top: 4px; }
+  .tags { margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap; }
+  .tag { background: var(--tag); border-radius: 4px; padding: 0 5px; font-size: 12px; }
+  .tag.mine { color: var(--mine); }
   .detail { font-size: 13px; color: var(--sub); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
-  .note { margin: 0 16px; font-size: 12px; color: var(--sub); }
+  .acts { margin-top: 8px; display: flex; gap: 6px; }
+  .acts button { border: 1px solid var(--line); background: transparent; color: var(--sub);
+                 border-radius: 6px; padding: 2px 10px; font-size: 12px; }
   .msg { color: var(--sub); padding: 32px 16px; text-align: center; }
   .msg input { width: 100%; margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px;
                background: var(--card); color: var(--ink); font-size: 15px; }
   .msg button { margin-top: 8px; width: 100%; padding: 10px; border: 0; border-radius: 8px;
                 background: var(--ink); color: var(--bg); font-size: 15px; }
+
+  /* 편집 창 */
+  .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; align-items: flex-end; justify-content: center; }
+  .sheet.on { display: flex; }
+  .panel { width: 100%; max-width: 520px; background: var(--card); border-radius: 14px 14px 0 0; padding: 16px 16px 24px; }
+  .panel h3 { margin: 0 0 12px; font-size: 16px; }
+  .panel label { display: block; font-size: 12px; color: var(--sub); margin: 10px 0 4px; }
+  .panel input, .panel select, .panel textarea {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; }
+  .panel textarea { min-height: 64px; resize: vertical; }
+  .row2 { display: flex; gap: 8px; } .row2 > div { flex: 1; }
+  .panel .foot { display: flex; gap: 8px; margin-top: 16px; }
+  .panel .foot button { flex: 1; padding: 10px; font-size: 15px; }
+  .err { color: var(--hot); font-size: 13px; margin-top: 8px; min-height: 1em; }
 </style>
 </head>
 <body>
@@ -54,31 +77,57 @@
     <h1>디데이 25</h1>
     <div class="meta" id="meta">불러오는 중…</div>
   </div>
-  <button class="ref" onclick="refresh()">새로고침</button>
+  <div class="btns">
+    <button class="solid" id="addBtn" style="display:none" onclick="openEdit(null)">＋ 추가</button>
+    <button class="ghost" onclick="refresh()">새로고침</button>
+  </div>
 </header>
 <p class="note">카톡 공지를 AI가 자동으로 정리한 목록입니다. 빠지거나 틀릴 수 있으니 중요한 건 꼭 원문 공지를 확인하세요.</p>
+<div class="adminbar" id="adminbar" style="display:none">관리자 모드 · 고치거나 지운 내용은 다음 정리 때도 유지됩니다</div>
 <main id="list"></main>
+
+<div class="sheet" id="sheet" onclick="if(event.target===this)closeEdit()">
+  <div class="panel">
+    <h3 id="edTitle">일정 추가</h3>
+    <label>제목</label>
+    <input id="fTitle" maxlength="60" placeholder="예: 보존 실습 보고서 제출">
+    <div class="row2">
+      <div><label>날짜</label><input id="fDate" type="date"></div>
+      <div><label>시각 (모르면 비워두기)</label><input id="fTime" type="time"></div>
+    </div>
+    <label>공지방</label>
+    <select id="fRoom"></select>
+    <label>메모 (장소·준비물·대상 등)</label>
+    <textarea id="fDetail" maxlength="500"></textarea>
+    <div class="err" id="fErr"></div>
+    <div class="foot">
+      <button class="ghost" onclick="closeEdit()">취소</button>
+      <button class="solid" id="fSave" onclick="save()">저장</button>
+    </div>
+  </div>
+</div>
 
 <script>
   // ▼ Apps Script 웹 앱 URL (…/exec 로 끝나는 주소). 키는 여기 적지 마세요.
   var API = 'https://script.google.com/macros/s/AKfycbwRnmj7_C7Mlq-0Uri6XcN0SsqzL8szjj2dDTQnDit8xUXj3_prZ7CITfMX6cgBE40p/exec';
 
   var WD = ['일','월','화','수','목','금','토'];
-  var DATA = { tasks: [], now: '', lastMessage: '' };
-  var TOKEN = loadToken();
+  var DATA = { tasks: [], rooms: [] };
+  var KEY = loadKey();
+  var editing = null;
 
-  function loadToken() {
-    var m = /[#&]k=([^&]+)/.exec(location.hash);
+  function loadKey() {
+    var m = /[#&]k=([^&]+)/.exec(location.hash) || /[?&]k=([^&]+)/.exec(location.search);
     var t = m ? decodeURIComponent(m[1]) : '';
     try {
-      if (t) { localStorage.setItem('notice_token', t); history.replaceState(null, '', location.pathname); }
+      if (t) { t = t.trim(); localStorage.setItem('notice_token', t); history.replaceState(null, '', location.pathname); }
       else t = localStorage.getItem('notice_token') || '';
     } catch (e) {}
     return t;
   }
 
-  function esc(s) { return String(s || '').replace(/[&<>"]/g, function (c) {
-    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function dayStart(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
 
   function parseDue(s) {
@@ -86,7 +135,7 @@
     if (!m) return null;
     return { day: new Date(+m[1], m[2] - 1, +m[3]),
              end: new Date(+m[1], m[2] - 1, +m[3], m[4] ? +m[4] : 23, m[5] ? +m[5] : 59),
-             hm: m[4] ? m[4] + ':' + m[5] : '' };
+             date: m[1] + '-' + m[2] + '-' + m[3], hm: m[4] ? m[4] + ':' + m[5] : '' };
   }
 
   function render() {
@@ -110,9 +159,11 @@
       arr.forEach(function (t) { html += itemHtml(t); });
       html += '</section>';
     });
-    document.getElementById('list').innerHTML = html || '<div class="msg">다가오는 마감이 없습니다.</div>';
+    document.getElementById('list').innerHTML = html || '<div class="msg">다가오는 일정이 없습니다.</div>';
     document.getElementById('meta').textContent =
-      '마지막 공지 ' + (DATA.lastMessage ? DATA.lastMessage.slice(5) : '-') + ' · 갱신 ' + (DATA.now || '').slice(5);
+      '마지막 정리 ' + (DATA.lastSync ? DATA.lastSync.slice(5) : '-');
+    document.getElementById('addBtn').style.display = DATA.admin ? '' : 'none';
+    document.getElementById('adminbar').style.display = DATA.admin ? '' : 'none';
   }
 
   function itemHtml(t) {
@@ -121,6 +172,10 @@
     var cls = t._diff === 0 ? 'hot' : t._diff <= 2 ? 'warm' : '';
     var time = t._d.hm ? '<b>' + t._d.hm + '</b>' + (t._diff === 0 ? ' 까지' : '')
                        : '<span class="none">시각 미정 (당일 중)</span>';
+    var tags = (t.room ? '<span class="tag">' + esc(t.room) + '</span>' : '') +
+               (t.manual ? '<span class="tag mine">직접 입력</span>' : '');
+    var acts = DATA.admin ? '<div class="acts"><button onclick="openEdit(\'' + esc(t.id) + '\')">수정</button>' +
+               '<button onclick="del(\'' + esc(t.id) + '\')">삭제</button></div>' : '';
     return '<div class="item">' +
       '<div class="when"><div class="md">' + (d.getMonth() + 1) + '/' + d.getDate() + '</div>' +
       '<div class="wd">' + WD[d.getDay()] + '요일</div>' +
@@ -128,33 +183,89 @@
       '<div class="body"><div class="title">' + esc(t.title) + '</div>' +
       '<div class="time">' + time + '</div>' +
       (t.detail ? '<div class="detail">' + esc(t.detail) + '</div>' : '') +
-      '<span class="room">' + esc(t.room) + '</span></div></div>';
+      (tags ? '<div class="tags">' + tags + '</div>' : '') + acts + '</div></div>';
   }
 
+  /* ---------- 관리자 편집 ---------- */
+  function openEdit(id) {
+    editing = id ? DATA.tasks.filter(function (t) { return t.id === id; })[0] : null;
+    var d = editing ? parseDue(editing.due) : null;
+    document.getElementById('edTitle').textContent = editing ? '일정 수정' : '일정 추가';
+    document.getElementById('fTitle').value = editing ? editing.title : '';
+    document.getElementById('fDate').value = d ? d.date : '';
+    document.getElementById('fTime').value = d ? d.hm : '';
+    document.getElementById('fDetail').value = editing ? editing.detail : '';
+    var rooms = (DATA.rooms || []).slice();
+    if (editing && editing.room && rooms.indexOf(editing.room) === -1) rooms.push(editing.room);
+    document.getElementById('fRoom').innerHTML = rooms.concat(['기타']).map(function (r) {
+      return '<option' + (editing && editing.room === r ? ' selected' : '') + '>' + esc(r) + '</option>';
+    }).join('');
+    document.getElementById('fErr').textContent = '';
+    document.getElementById('sheet').classList.add('on');
+  }
+  function closeEdit() { document.getElementById('sheet').classList.remove('on'); editing = null; }
+
+  function save() {
+    var title = document.getElementById('fTitle').value.trim();
+    var date = document.getElementById('fDate').value;
+    var time = document.getElementById('fTime').value;
+    if (!title || !date) { document.getElementById('fErr').textContent = '제목과 날짜는 꼭 입력하세요.'; return; }
+    var room = document.getElementById('fRoom').value;
+    post({ type: editing ? 'edit' : 'add', id: editing ? editing.id : '', title: title,
+           due: date + (time ? ' ' + time : ''), room: room === '기타' ? '' : room,
+           detail: document.getElementById('fDetail').value.trim() }, true);
+  }
+
+  function del(id) {
+    var t = DATA.tasks.filter(function (x) { return x.id === id; })[0];
+    if (!t || !confirm('"' + t.title + '" 일정을 지울까요?\n다음 정리 때도 다시 나타나지 않습니다.')) return;
+    post({ type: 'delete', id: id }, false);
+  }
+
+  function post(body, fromSheet) {
+    body.token = KEY;
+    var btn = document.getElementById('fSave');
+    btn.disabled = true; btn.textContent = '저장 중…';
+    fetch(API, { method: 'POST', credentials: 'omit',
+                 headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || '저장 실패');
+        if (fromSheet) closeEdit();
+        refresh();
+      })
+      .catch(function (e) {
+        if (fromSheet) document.getElementById('fErr').textContent = e.message || '저장 실패';
+        else alert(e.message || '삭제 실패');
+      })
+      .then(function () { btn.disabled = false; btn.textContent = '저장'; });
+  }
+
+  /* ---------- 불러오기 ---------- */
   function showMsg(html) { document.getElementById('list').innerHTML = '<div class="msg">' + html + '</div>'; }
 
-  function askToken(reason) {
+  function askKey(reason) {
     document.getElementById('meta').textContent = '';
     showMsg((reason ? esc(reason) + '<br>' : '') + '보기 키를 입력하세요.' +
-      '<input id="tk" type="password" autocomplete="off"><button onclick="saveToken()">확인</button>');
+      '<input id="tk" type="password" autocomplete="off"><button onclick="saveKey()">확인</button>');
   }
 
-  function saveToken() {
-    TOKEN = document.getElementById('tk').value.trim();
-    try { localStorage.setItem('notice_token', TOKEN); } catch (e) {}
+  function saveKey() {
+    KEY = document.getElementById('tk').value.trim();
+    try { localStorage.setItem('notice_token', KEY); } catch (e) {}
     refresh();
   }
 
   function refresh() {
-    if (!TOKEN) return askToken('');
+    if (!KEY) return askKey('');
     document.getElementById('meta').textContent = '불러오는 중…';
-    fetch(API + '?format=json&k=' + encodeURIComponent(TOKEN), { credentials: 'omit' })
+    fetch(API + '?k=' + encodeURIComponent(KEY) + '&t=' + Date.now(), { credentials: 'omit' })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d.ok) {
           try { localStorage.removeItem('notice_token'); } catch (e) {}
-          TOKEN = '';
-          return askToken('보기 키가 맞지 않습니다.');
+          KEY = '';
+          return askKey('키가 맞지 않습니다.');
         }
         DATA = d; render();
       })
@@ -163,8 +274,12 @@
       });
   }
 
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && TOKEN) refresh(); });
-  setInterval(function () { if (!document.hidden && TOKEN) render(); }, 60000);   // 시간이 지나면 지난 항목 자동으로 빠짐
+  // 이미 열린 페이지에서 주소 끝(#k=...)만 바꿔 열면 페이지가 새로 안 열리므로 직접 감지
+  window.addEventListener('hashchange', function () {
+    if (/[#&]k=/.test(location.hash)) { KEY = loadKey(); DATA = { tasks: [], rooms: [] }; refresh(); }
+  });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && KEY) refresh(); });
+  setInterval(function () { if (!document.hidden && KEY && !editing) render(); }, 60000);   // 지난 항목 자동으로 빠짐
   refresh();
 </script>
 </body>
