@@ -390,7 +390,11 @@
         alert((d.log || []).join('\n') || '완료');
         refresh();
       })
-      .catch(function (e) { alert('정리 실패: ' + (e.message || e)); })
+      .catch(function (e) {
+        var m = String(e.message || e);
+        if (/fetch|network|load/i.test(m)) m = '응답을 받지 못했습니다. 정리는 계속 진행 중일 수 있으니 1~2분 뒤 새로고침해 보세요.\n(' + m + ')';
+        alert('정리 실패: ' + m);
+      })
       .then(function () { b.disabled = false; b.textContent = '지금 정리'; });
   }
 

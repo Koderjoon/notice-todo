@@ -85,8 +85,13 @@ function doPost(e) {
   const admin = secret_('TOKEN');
   if (!admin || body.token !== admin) return json_({ ok: false, error: 'token' });
   if (body.type === 'sync') {           // 관리자 페이지의 '지금 정리' 버튼
-    const r = processExports();
-    return json_({ ok: true, busy: !r, log: r || ['다른 정리가 진행 중입니다. 잠시 후 새로고침해 보세요.'] });
+    try {
+      const r = processExports();
+      return json_({ ok: true, busy: !r, log: r || ['다른 정리가 진행 중입니다. 잠시 후 새로고침해 보세요.'] });
+    } catch (err) {
+      console.error(err);
+      return json_({ ok: false, error: '정리 중 오류: ' + err });   // 오류도 JSON으로 돌려줘야 페이지가 읽을 수 있음
+    }
   }
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
