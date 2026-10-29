@@ -107,7 +107,7 @@
 </header>
 <p class="note">카톡 공지를 AI가 자동으로 정리한 목록입니다. 빠지거나 틀릴 수 있으니 중요한 건 꼭 원문 공지를 확인하세요.</p>
 <div class="adminbar" id="adminbar" style="display:none">관리자 모드 · 고치거나 지운 내용은 다음 정리 때도 유지됩니다</div>
-<div class="tabs">
+<div class="tabs" id="tabs" style="display:none">
   <button id="tabTasks" onclick="setTab('tasks')">마감 일정</button>
   <button id="tabSup" onclick="setTab('sup')">실습 준비물</button>
 </div>
@@ -194,6 +194,9 @@
   }
 
   function render() {
+    var supOn = !!DATA.labs;                  // 서버에서 준비물 기능을 켰을 때만 탭 표시
+    document.getElementById('tabs').style.display = supOn ? '' : 'none';
+    if (!supOn) TAB = 'tasks';
     document.getElementById('tabTasks').className = TAB === 'tasks' ? 'on' : '';
     document.getElementById('tabSup').className = TAB === 'sup' ? 'on' : '';
     document.getElementById('meta').textContent =

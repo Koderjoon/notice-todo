@@ -21,6 +21,7 @@ const CONFIG = {
   CLAUDE_MODEL: 'claude-haiku-5-5',
   EXPORT_FOLDER: '카톡공지_내보내기',
   REBUILD_DAYS: 21,          // 내보내기 파일에서 최근 며칠 공지로 목록을 만들지
+  SUPPLIES: false,           // 실습 준비물 기능 (true로 바꾸면 다시 켜짐)
   // 요일별 실습 (1=월 … 5=금)
   LABS: {
     1: ['소아치과학'],
@@ -256,8 +257,8 @@ function pageData_() {
   });
   return {
     tasks: tasks,
-    supplies: supplies,
-    labs: CONFIG.LABS,
+    supplies: CONFIG.SUPPLIES ? supplies : [],
+    labs: CONFIG.SUPPLIES ? CONFIG.LABS : null,
     rooms: CONFIG.ROOMS,
     lastSync: PropertiesService.getScriptProperties().getProperty('lastSync') || '',
     now: fmt_(new Date())
@@ -355,16 +356,16 @@ function rebuildRoom_(room, messages) {
       return false;                     // 기존 목록은 그대로 유지
     }
     list = applyOpsMem_(list, result.ops || [], batch, room);
-    slist = applySupplyOpsMem_(slist, result.ops || [], batch, room);
+    if (CONFIG.SUPPLIES) slist = applySupplyOpsMem_(slist, result.ops || [], batch, room);
   }
 
   writeAutoTasks_(room, list.filter(function (t) { return t.status === 'open' && t.due; }));
-  writeAutoSupplies_(room, slist.filter(function (x) { return x.status === 'open' && x.items; }));
+  if (CONFIG.SUPPLIES) writeAutoSupplies_(room, slist.filter(function (x) { return x.status === 'open' && x.items; }));
   PropertiesService.getScriptProperties().setProperty('lastSync', fmt_(new Date()));
   CacheService.getScriptCache().remove('page');
   return (room + ': 최근 ' + CONFIG.REBUILD_DAYS + '일 공지 ' + msgs.length + '개 → 일정 ' +
-              list.filter(function (t) { return t.status === 'open' && t.due; }).length + '개, 준비물 ' +
-              slist.filter(function (x) { return x.status === 'open'; }).length + '개로 다시 만듦');
+              list.filter(function (t) { return t.status === 'open' && t.due; }).length + '개' +
+              (CONFIG.SUPPLIES ? ', 준비물 ' + slist.filter(function (x) { return x.status === 'open'; }).length + '개' : '') + '로 다시 만듦');
 }
 
 function taskForPrompt_(t) { return { id: t.id, title: t.title, due: t.due || null, detail: t.detail }; }
@@ -468,8 +469,22 @@ function writeAutoTasks_(room, newTasks) {
 
 /* ---------- AI ---------- */
 function buildPrompt_(known, msgs, knownSup) {
+  const on = CONFIG.SUPPLIES;
+  const supRules = on ? [
+    '## 실습 준비물 규칙',
+    '- 정규 실습 시간표: ' + labsText_(),
+    '- subject는 반드시 이 중 하나: ' + allSubjects_().join(', '),
+    '- 줄임말도 알맞은 과목으로 연결하라 (예: 보존·수복→보존수복학, 엔도·근관→근관치료학, 크라운·브릿지·금관→금관가공의치학, 파샬·RPD·국소→국소의치학, 덴처·총의치·CD→총의치학, 치주→치주학, 교정→교정학, 소아→소아치과학, 예방→예방치과학). 어느 과목인지 알 수 없으면 supply 하지 마라.',
+    '- 실습에 가져와야 할 물품·기구·재료·복장·출력물이 공지되면 supply 하라.',
+    '- 특정 날짜 실습에만 해당하면 date에 그 날짜("YYYY-MM-DD"). "다음 실습", "이번 주 실습" 같은 표현은 위 시간표와 메시지 time으로 실제 날짜를 계산하라.',
+    '- "매 실습", "앞으로", "학기 내내"처럼 계속 챙겨야 하면 date는 null.',
+    '- items는 쉼표로 구분한 물품 목록(예: "러버댐 키트, 핸드피스, 실습 가운"). detail에는 수량·주의사항을 짧게.',
+    '- 이미 있는 준비물이 바뀌면 supply_update(id 사용), 필요 없어졌다고 하면 supply_cancel.',
+    '- 준비물은 일정의 detail에도 적어도 되지만, 실습 준비물이면 supply도 반드시 함께 만들어라.',
+    ''
+  ] : [];
   return [
-    '너는 치의학전문대학원 학급의 공지 비서다. 카카오톡 공지방 메시지에서 학생들이 챙겨야 할 "마감·일정"과 "실습 준비물"을 뽑는다.',
+    '너는 치의학전문대학원 학급의 공지 비서다. 카카오톡 공지방 메시지에서 학생들이 챙겨야 할 ' + (on ? '"마감·일정"과 "실습 준비물"을' : '"마감·일정"을') + ' 뽑는다.',
     '현재 시각(KST): ' + fmt_(new Date()),
     '',
     '## 규칙',
@@ -485,27 +500,16 @@ function buildPrompt_(known, msgs, knownSup) {
     '- title: 25자 이내 명사형(예: "보존 실습 보고서 제출"). detail: 한두 줄, 없으면 "".',
     '- add 할 때 src에는 그 내용이 나온 메시지의 i 값을 넣어라.',
     '',
-    '## 실습 준비물 규칙',
-    '- 정규 실습 시간표: ' + labsText_(),
-    '- subject는 반드시 이 중 하나: ' + allSubjects_().join(', '),
-    '- 줄임말도 알맞은 과목으로 연결하라 (예: 보존·수복→보존수복학, 엔도·근관→근관치료학, 크라운·브릿지·금관→금관가공의치학, 파샬·RPD·국소→국소의치학, 덴처·총의치·CD→총의치학, 치주→치주학, 교정→교정학, 소아→소아치과학, 예방→예방치과학). 어느 과목인지 알 수 없으면 supply 하지 마라.',
-    '- 실습에 가져와야 할 물품·기구·재료·복장·출력물이 공지되면 supply 하라.',
-    '- 특정 날짜 실습에만 해당하면 date에 그 날짜("YYYY-MM-DD"). "다음 실습", "이번 주 실습" 같은 표현은 위 시간표와 메시지 time으로 실제 날짜를 계산하라.',
-    '- "매 실습", "앞으로", "학기 내내"처럼 계속 챙겨야 하면 date는 null.',
-    '- items는 쉼표로 구분한 물품 목록(예: "러버댐 키트, 핸드피스, 실습 가운"). detail에는 수량·주의사항을 짧게.',
-    '- 이미 있는 준비물이 바뀌면 supply_update(id 사용), 필요 없어졌다고 하면 supply_cancel.',
-    '- 준비물은 일정의 detail에도 적어도 되지만, 실습 준비물이면 supply도 반드시 함께 만들어라.',
-    '',
+    ...supRules,
     '## 출력 (JSON만, 설명 금지)',
-    '{"ops":[{"op":"add","src":0,"title":"","due":"","detail":""},{"op":"update","id":"","title":"","due":"","detail":""},{"op":"cancel","id":""},',
-    ' {"op":"supply","src":0,"subject":"","date":null,"items":"","detail":""},{"op":"supply_update","id":"","date":null,"items":"","detail":""},{"op":"supply_cancel","id":""}]}',
+    '{"ops":[{"op":"add","src":0,"title":"","due":"","detail":""},{"op":"update","id":"","title":"","due":"","detail":""},{"op":"cancel","id":""}' +
+      (on ? ',\n {"op":"supply","src":0,"subject":"","date":null,"items":"","detail":""},{"op":"supply_update","id":"","date":null,"items":"","detail":""},{"op":"supply_cancel","id":""}' : '') + ']}',
     '없으면 {"ops":[]}',
     '',
     '## 기존 일정 목록',
     JSON.stringify(known),
     '',
-    '## 기존 준비물 목록',
-    JSON.stringify(knownSup || []),
+    on ? '## 기존 준비물 목록\n' + JSON.stringify(knownSup || []) : '',
     '',
     '## 메시지 (시간순)',
     JSON.stringify(msgs.map(function (m) { return { i: m.i, sender: m.sender, time: m.time, text: m.text }; }))
