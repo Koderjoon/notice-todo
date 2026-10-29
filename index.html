@@ -101,6 +101,7 @@
   </div>
   <div class="btns">
     <button class="solid" id="addBtn" style="display:none" onclick="TAB === 'sup' ? openSup(null) : openEdit(null)">＋ 추가</button>
+    <button class="ghost" id="syncBtn" style="display:none" onclick="syncNow()">지금 정리</button>
     <button class="ghost" onclick="refresh()">새로고침</button>
   </div>
 </header>
@@ -200,6 +201,7 @@
     document.getElementById('addBtn').style.display = DATA.admin ? '' : 'none';
     document.getElementById('addBtn').textContent = TAB === 'sup' ? '＋ 준비물' : '＋ 일정';
     document.getElementById('adminbar').style.display = DATA.admin ? '' : 'none';
+    document.getElementById('syncBtn').style.display = DATA.admin ? '' : 'none';
     if (TAB === 'sup') return renderSup();
     var now = new Date(), today = dayStart(now);
     var groups = { today: [], tomorrow: [], week: [], later: [] };
@@ -373,6 +375,23 @@
         else alert(e.message || '삭제 실패');
       })
       .then(function () { btn.disabled = false; btn.textContent = '저장'; });
+  }
+
+  /* 드라이브에 올린 내보내기 파일을 지금 바로 정리 (관리자) */
+  function syncNow() {
+    var b = document.getElementById('syncBtn');
+    if (b.disabled) return;
+    b.disabled = true; b.textContent = '정리 중… (1~2분)';
+    fetch(API, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                 body: JSON.stringify({ token: KEY, type: 'sync' }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || '실패');
+        alert((d.log || []).join('\n') || '완료');
+        refresh();
+      })
+      .catch(function (e) { alert('정리 실패: ' + (e.message || e)); })
+      .then(function () { b.disabled = false; b.textContent = '지금 정리'; });
   }
 
   /* ---------- 불러오기 ---------- */

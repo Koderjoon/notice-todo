@@ -49,11 +49,26 @@ function setup() {
   ensureSheet_(ss, SH_SUP, SUP_HEAD);
   getExportFolder_();
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('processExports').timeBased().everyHours(1).create();
+  ScriptApp.newTrigger('processExports').timeBased().everyMinutes(CHECK_MINUTES).create();
+  PropertiesService.getScriptProperties().setProperty('trigger_v', TRIGGER_V);
   ['TOKEN', 'VIEW_KEY'].forEach(function (k) {
     if (!secret_(k)) console.warn('스크립트 속성에 ' + k + ' 가 없습니다. 프로젝트 설정 → 스크립트 속성에서 추가하세요.');
   });
-  console.log('설정 완료: 1시간마다 내보내기 폴더를 확인합니다.');
+  console.log('설정 완료: ' + CHECK_MINUTES + '분마다 내보내기 폴더를 확인합니다.');
+}
+
+/* 자동 확인 주기가 바뀌었으면 예약을 알아서 새로 맞춤 (setup을 다시 안 해도 되게) */
+const CHECK_MINUTES = 5;
+const TRIGGER_V = 'every' + CHECK_MINUTES + 'min';
+function ensureTriggers_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('trigger_v') === TRIGGER_V) return;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'processExports' || t.getHandlerFunction() === 'updateFromGitHub') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('processExports').timeBased().everyMinutes(CHECK_MINUTES).create();
+  props.setProperty('trigger_v', TRIGGER_V);
+  console.log('자동 확인 주기를 ' + CHECK_MINUTES + '분으로 바꿨습니다.');
 }
 
 /* 설치 확인용: 가짜 공지로 AI 추출만 해보고 저장은 하지 않음 */
@@ -69,6 +84,10 @@ function doPost(e) {
   try { body = JSON.parse(e.postData.contents); } catch (err) {}
   const admin = secret_('TOKEN');
   if (!admin || body.token !== admin) return json_({ ok: false, error: 'token' });
+  if (body.type === 'sync') {           // 관리자 페이지의 '지금 정리' 버튼
+    const r = processExports();
+    return json_({ ok: true, busy: !r, log: r || ['다른 정리가 진행 중입니다. 잠시 후 새로고침해 보세요.'] });
+  }
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -195,6 +214,7 @@ function doGet(e) {
   const k = e.parameter.k || '';
   const admin = secret_('TOKEN'), view = secret_('VIEW_KEY');
   if (!k || (k !== view && k !== admin)) return json_({ ok: false, error: 'key' });
+  try { ensureTriggers_(); } catch (err) { console.warn(err); }
   const cache = CacheService.getScriptCache();
   let d = cache.get('page');
   if (!d) {                             // 여러 명이 동시에 열어도 시트는 1분에 한 번만 읽음
@@ -250,8 +270,11 @@ function isHidden_(t, hidden) {
 
 /* ---------- 내보내기 파일 → 목록 다시 만들기 ---------- */
 function processExports() {
+  try { ensureTriggers_(); } catch (err) { console.warn(err); }
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return;      // 이미 처리 중이면 다음 기회에
+  if (!lock.tryLock(1000)) return null;  // 이미 처리 중이면 다음 기회에
+  const summary = [];
+  const note = function (m) { console.log(m); summary.push(m); };
   try {
     const t0 = Date.now();
     const folder = getExportFolder_();
@@ -261,8 +284,9 @@ function processExports() {
     while (it.hasNext()) files.push(it.next());
     files.sort(function (a, b) { return a.getDateCreated() - b.getDateCreated(); });   // 오래된 것부터
 
+    if (!files.length) note('폴더에 새 내보내기 파일이 없습니다.');
     files.forEach(function (f) {
-      if (Date.now() - t0 > 4 * 60 * 1000) { console.log('시간 부족 → 남은 파일은 다음 실행에서 처리: ' + f.getName()); return; }
+      if (Date.now() - t0 > 4 * 60 * 1000) { note('시간 부족 → 다음 확인 때 처리: ' + f.getName()); return; }
       const name = f.getName();
       const mime = f.getMimeType();
       if (/^application\/vnd\.google-apps/.test(mime) || /^(image|video|audio)\//.test(mime)) {
@@ -286,14 +310,17 @@ function processExports() {
           return;
         }
         found = true;
-        ok = rebuildRoom_(parsed.room, parsed.messages) && ok;
+        const r = rebuildRoom_(parsed.room, parsed.messages);
+        ok = !!r && ok;
+        note(r ? r : parsed.room + ': AI 서버가 붐벼서 실패 → 기존 목록 유지, ' + CHECK_MINUTES + '분 뒤 자동 재시도');
       });
       if (found && ok) f.moveTo(doneFolder);
-      else if (found) console.log('AI 처리 실패 → 파일을 그대로 두고 1시간 뒤 다시 시도: ' + name);
+      else if (!found) note('읽을 수 없는 파일: ' + name);
     });
   } finally {
     lock.releaseLock();
   }
+  return summary;
 }
 
 /* 한 방의 자동 항목을 최근 공지로 통째로 다시 만듦. AI가 끝까지 성공했을 때만 교체 */
@@ -330,10 +357,9 @@ function rebuildRoom_(room, messages) {
   writeAutoSupplies_(room, slist.filter(function (x) { return x.status === 'open' && x.items; }));
   PropertiesService.getScriptProperties().setProperty('lastSync', fmt_(new Date()));
   CacheService.getScriptCache().remove('page');
-  console.log(room + ': 최근 ' + CONFIG.REBUILD_DAYS + '일 공지 ' + msgs.length + '개 → 일정 ' +
+  return (room + ': 최근 ' + CONFIG.REBUILD_DAYS + '일 공지 ' + msgs.length + '개 → 일정 ' +
               list.filter(function (t) { return t.status === 'open' && t.due; }).length + '개, 준비물 ' +
               slist.filter(function (x) { return x.status === 'open'; }).length + '개로 다시 만듦');
-  return true;
 }
 
 function taskForPrompt_(t) { return { id: t.id, title: t.title, due: t.due || null, detail: t.detail }; }
