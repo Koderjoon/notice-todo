@@ -59,7 +59,7 @@ function setup() {
 }
 
 /* 자동 확인 주기가 바뀌었으면 예약을 알아서 새로 맞춤 (setup을 다시 안 해도 되게) */
-const CHECK_MINUTES = 5;
+const CHECK_MINUTES = 1;          // 1·5·10·15·30 중 하나 (구글이 허용하는 최소 간격이 1분)
 const TRIGGER_V = 'every' + CHECK_MINUTES + 'min';
 function ensureTriggers_() {
   const props = PropertiesService.getScriptProperties();
