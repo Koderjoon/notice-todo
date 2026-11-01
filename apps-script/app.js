@@ -243,11 +243,14 @@ function doGet(e) {
 function pageData_() {
   const now = Date.now();
   const hidden = readHidden_();
-  const tasks = readTasks_().filter(function (t) {
+  const all = readTasks_();
+  const manual = all.filter(function (t) { return t.source === 'manual' && t.status === 'open'; });
+  const tasks = all.filter(function (t) {
     if (t.status !== 'open') return false;
     const end = dueEnd_(t.due);
     if (!end || end.getTime() < now) return false;          // 마감이 명확하고 아직 안 지난 것만
-    return t.source === 'manual' || !isHidden_(t, hidden);
+    if (t.source === 'manual') return true;
+    return !isHidden_(t, hidden) && !dupOfManual_(t, manual);
   }).sort(function (a, b) { return dueEnd_(a.due) - dueEnd_(b.due); })
     .map(function (t) {
       return { id: t.id, title: t.title, due: t.due, room: t.room, detail: t.detail, manual: t.source === 'manual' };
@@ -269,6 +272,21 @@ function pageData_() {
     now: fmt_(new Date())
   };
 }
+
+/* 직접 입력한 일정과 같은 날짜·비슷한 제목의 자동 항목은 중복이므로 숨김 */
+function dupOfManual_(t, manual) {
+  const day = String(t.due).slice(0, 10);
+  const a = bigrams_(titleKey_(t.title));
+  return manual.some(function (m) {
+    if (String(m.due).slice(0, 10) !== day) return false;
+    const b = bigrams_(titleKey_(m.title));
+    if (!a.length || !b.length) return false;
+    let same = 0;
+    a.forEach(function (x) { if (b.indexOf(x) !== -1) same++; });
+    return same / Math.min(a.length, b.length) >= 0.6;
+  });
+}
+function bigrams_(s) { const out = []; for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2)); return out; }
 
 function isHidden_(t, hidden) {
   const day = String(t.due).slice(0, 10);
@@ -494,7 +512,10 @@ function buildPrompt_(known, msgs, knownSup) {
     '',
     '## 규칙',
     '- 대상: 제출·과제·신청·설문·서명·납부 마감, 실습/시험/특강/행사 일정, 출결 관련 지시.',
-    '- 날짜가 명확히 제시된 것만 add 하라. "추후 공지", "곧", "빠른 시일 내" 처럼 날짜를 특정할 수 없으면 add 하지 마라.',
+    '- 날짜가 명확히 제시된 것만 add 하라. "추후 공지", "곧", "빠른 시일 내" 처럼 날짜 자체를 특정할 수 없으면 add 하지 마라.',
+    '- 날짜는 있는데 시각만 정해지지 않았으면("시간 추후", "시간 미정", "시간은 추후 공지") 반드시 날짜만으로 add 하고 detail 맨 앞에 "시각 추후 공지"라고 적어라.',
+    '- "11/2", "11/2월", "11.2(월)", "11월 2일"처럼 쓰인 것은 모두 날짜다. 연도가 없으면 메시지 time에 가장 가까운 미래 날짜로 정하라.',
+    '- 한 메시지 안에 여러 일정이 섞여 있으면(예: 실습 공지 끝에 붙은 검사·제출·재검 안내) 하나도 빠뜨리지 말고 각각 add 하라.',
     '- 제출·신청류는 마감 시각을, 실습·시험·행사류는 시작 시각을 due로 한다. "오후 6시"→18:00, "자정까지"→23:59, "정오"→12:00.',
     '- 준비물·지참물·장소·대상(조, 번호)은 따로 add 하지 말고 해당 일정의 detail에 넣어라.',
     '- 무시: 인사, "넵/확인했습니다" 같은 답장, 행동이 필요 없는 단순 안내.',
