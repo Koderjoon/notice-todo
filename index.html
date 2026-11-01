@@ -385,9 +385,13 @@
     var b = document.getElementById('syncBtn');
     if (b.disabled) return;
     b.disabled = true; b.textContent = '정리 중… (1~2분)';
-    fetch(API, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                 body: JSON.stringify({ token: KEY, type: 'sync' }) })
-      .then(function (r) { return r.json(); })
+    var send = function (type) {
+      return fetch(API, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                          body: JSON.stringify({ token: KEY, type: type }) }).then(function (r) { return r.json(); });
+    };
+    // 1) 서버가 GitHub의 최신 코드를 쓰도록 먼저 새로 불러오고(reloadApp과 같음) 2) 정리
+    send('reload').catch(function () {})
+      .then(function () { return send('sync'); })
       .then(function (d) {
         if (!d.ok) throw new Error(d.error || '실패');
         alert((d.log || []).join('\n') || '완료');

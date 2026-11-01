@@ -85,6 +85,11 @@ function doPost(e) {
   try { body = JSON.parse(e.postData.contents); } catch (err) {}
   const admin = secret_('TOKEN');
   if (!admin || body.token !== admin) return json_({ ok: false, error: 'token' });
+  if (body.type === 'reload') {         // 다음 실행부터 GitHub의 최신 코드를 쓰도록 로더 캐시 비우기
+    const c = CacheService.getScriptCache();
+    c.remove('appsrc'); c.remove('page');
+    return json_({ ok: true });
+  }
   if (body.type === 'sync') {           // 관리자 페이지의 '지금 정리' 버튼
     try {
       const r = processExports();
