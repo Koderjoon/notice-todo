@@ -118,7 +118,7 @@ function adminOp_(b) {
 
   if (b.type === 'add') {
     if (!title || !due) return { ok: false, error: '제목과 날짜는 꼭 필요합니다' };
-    sh.appendRow([newId_(), title, due, room, detail, 'open', now, now, 'manual', '']);
+    appendText_(sh, [newId_(), title, due, room, detail, 'open', now, now, 'manual', '']);
     return { ok: true };
   }
 
@@ -131,13 +131,13 @@ function adminOp_(b) {
   if (b.type === 'edit') {
     if (!title || !due) return { ok: false, error: '제목과 날짜는 꼭 필요합니다' };
     if (t.source === 'manual') {
-      sh.getRange(row + 1, 2, 1, 4).setValues([[title, due, room, detail]]);
+      sh.getRange(row + 1, 2, 1, 4).setNumberFormat('@').setValues([[title, due, room, detail]]);
       sh.getRange(row + 1, 8).setValue(now);
     } else {
       // 자동 항목을 고치면: 원래 것은 숨기고, 고친 내용은 '직접 입력'으로 따로 보관
       hide_(t);
       sh.getRange(row + 1, 6).setValue('replaced');
-      sh.appendRow([newId_(), title, due, room, detail, 'open', now, now, 'manual', t.src]);
+      appendText_(sh, [newId_(), title, due, room, detail, 'open', now, now, 'manual', t.src]);
     }
     return { ok: true };
   }
@@ -165,7 +165,7 @@ function supplyOp_(b) {
     if (b.date && !date) return { ok: false, error: '날짜 형식이 맞지 않습니다' };
   }
   if (b.type === 'sadd') {
-    sh.appendRow([newId_(), subject, date, items, detail, '', 'open', now, 'manual', '']);
+    appendText_(sh, [newId_(), subject, date, items, detail, '', 'open', now, 'manual', '']);
     return { ok: true };
   }
   const vals = sh.getDataRange().getValues();
@@ -175,13 +175,13 @@ function supplyOp_(b) {
   const s = rowToSupply_(vals[row]);
   if (b.type === 'sedit') {
     if (s.source === 'manual') {
-      sh.getRange(row + 1, 2, 1, 4).setValues([[subject, date, items, detail]]);
+      sh.getRange(row + 1, 2, 1, 4).setNumberFormat('@').setValues([[subject, date, items, detail]]);
       sh.getRange(row + 1, 8).setValue(now);
     } else {
       // 자동 항목을 고치면: 원래 것은 숨기고, 고친 내용은 '직접 입력'으로 따로 보관
       hideSupply_(s);
       sh.getRange(row + 1, 7).setValue('replaced');
-      sh.appendRow([newId_(), subject, date, items, detail, s.room, 'open', now, 'manual', s.src]);
+      appendText_(sh, [newId_(), subject, date, items, detail, s.room, 'open', now, 'manual', s.src]);
     }
     return { ok: true };
   }
@@ -193,7 +193,7 @@ function supplyOp_(b) {
 
 function supplyKey_(s) { return 'S:' + s.subject + ':' + titleKey_(s.items); }
 function hideSupply_(s) {
-  sheet_(SH_HIDDEN).appendRow([s.src || '', supplyKey_(s), s.date || 'always', s.subject + ' ' + s.items, fmt_(new Date())]);
+  appendText_(sheet_(SH_HIDDEN), [s.src || '', supplyKey_(s), s.date || 'always', s.subject + ' ' + s.items, fmt_(new Date())]);
 }
 function isSupplyHidden_(s, hidden) {
   const day = s.date || 'always';
@@ -212,7 +212,7 @@ function allSubjects_() {
 }
 
 function hide_(t) {
-  sheet_(SH_HIDDEN).appendRow([t.src || '', titleKey_(t.title), String(t.due).slice(0, 10), t.title, fmt_(new Date())]);
+  appendText_(sheet_(SH_HIDDEN), [t.src || '', titleKey_(t.title), String(t.due).slice(0, 10), t.title, fmt_(new Date())]);
 }
 
 /* ---------- 목록 데이터 ---------- */
@@ -438,7 +438,7 @@ function writeAutoSupplies_(room, newRows) {
       keep.push([x.id, x.subject, x.date, x.items, x.detail, x.room, 'open', x.updated, 'auto', x.src]);
     });
     if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, SUP_HEAD.length).clearContent();
-    if (keep.length) sh.getRange(2, 1, keep.length, SUP_HEAD.length).setValues(keep);
+    if (keep.length) sh.getRange(2, 1, keep.length, SUP_HEAD.length).setNumberFormat('@').setValues(keep);
   } finally {
     lock.releaseLock();
   }
@@ -461,7 +461,7 @@ function writeAutoTasks_(room, newTasks) {
       keep.push([t.id, t.title, t.due, t.room, t.detail, 'open', t.created, t.updated, 'auto', t.src]);
     });
     if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, TASK_HEAD.length).clearContent();
-    if (keep.length) sh.getRange(2, 1, keep.length, TASK_HEAD.length).setValues(keep);
+    if (keep.length) sh.getRange(2, 1, keep.length, TASK_HEAD.length).setNumberFormat('@').setValues(keep);
   } finally {
     lock.releaseLock();
   }
@@ -677,9 +677,20 @@ function parseKakaoExport_(text, fileName) {
 
 /* ---------- 유틸 ---------- */
 function cell_(v) { return v instanceof Date ? fmt_(v) : String(v == null ? '' : v); }
+/* 날짜 칸: 시트가 글자를 날짜로 바꿔버려 자정(00:00)이 붙었으면 '날짜만'으로 되돌림 */
+function dateCell_(v) {
+  if (!(v instanceof Date)) return String(v == null ? '' : v);
+  const s = fmt_(v);
+  return /00:00$/.test(s) ? s.slice(0, 10) : s;
+}
+/* 행 추가: 날짜가 자동 변환되지 않게 글자 형식으로 먼저 지정한 뒤 기록 */
+function appendText_(sh, row) {
+  const r = sh.getLastRow() + 1;
+  sh.getRange(r, 1, 1, row.length).setNumberFormat('@').setValues([row]);
+}
 
 function rowToTask_(r) {
-  return { id: String(r[0]), title: String(r[1]), due: normDue_(cell_(r[2])), room: String(r[3] || ''),
+  return { id: String(r[0]), title: String(r[1]), due: normDue_(dateCell_(r[2])), room: String(r[3] || ''),
            detail: String(r[4] || ''), status: String(r[5] || 'open'), created: cell_(r[6]), updated: cell_(r[7]),
            source: String(r[8] || 'auto'), src: String(r[9] || '') };
 }
@@ -697,7 +708,7 @@ function labsText_() {
 }
 
 function rowToSupply_(r) {
-  return { id: String(r[0]), subject: String(r[1] || ''), date: cell_(r[2]).slice(0, 10), items: String(r[3] || ''),
+  return { id: String(r[0]), subject: String(r[1] || ''), date: dateCell_(r[2]).slice(0, 10), items: String(r[3] || ''),
            detail: String(r[4] || ''), room: String(r[5] || ''), status: String(r[6] || 'open'), updated: cell_(r[7]),
            source: String(r[8] || 'auto'), src: String(r[9] || '') };
 }
@@ -720,7 +731,7 @@ function readHidden_() {
   const out = [];
   for (let i = 1; i < vals.length; i++) {
     if (!vals[i][1] && !vals[i][0]) continue;
-    out.push({ src: String(vals[i][0] || ''), titleKey: String(vals[i][1] || ''), dueDate: cell_(vals[i][2]).slice(0, 10) });
+    out.push({ src: String(vals[i][0] || ''), titleKey: String(vals[i][1] || ''), dueDate: dateCell_(vals[i][2]).slice(0, 10) });
   }
   return out;
 }
