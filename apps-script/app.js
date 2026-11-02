@@ -244,7 +244,10 @@ function pageData_() {
   const now = Date.now();
   const hidden = readHidden_();
   const all = readTasks_();
-  const manual = all.filter(function (t) { return t.source === 'manual' && t.status === 'open'; });
+  const manual = all.filter(function (t) {             // 화면에 실제로 보이는 직접 입력 일정만
+    const end = dueEnd_(t.due);
+    return t.source === 'manual' && t.status === 'open' && end && end.getTime() >= now;
+  });
   const tasks = all.filter(function (t) {
     if (t.status !== 'open') return false;
     const end = dueEnd_(t.due);
@@ -748,7 +751,7 @@ function readSupplies_() {
 
 function padTo_(r, n) {
   const out = [];
-  for (let i = 0; i < n; i++) out.push(r[i] instanceof Date ? fmt_(r[i]) : (r[i] == null ? '' : r[i]));
+  for (let i = 0; i < n; i++) out.push(r[i] instanceof Date ? dateCell_(r[i]) : (r[i] == null ? '' : r[i]));
   return out;
 }
 
@@ -764,7 +767,7 @@ function readHidden_() {
 
 function pad_(r) {
   const out = [];
-  for (let i = 0; i < TASK_HEAD.length; i++) out.push(r[i] instanceof Date ? fmt_(r[i]) : (r[i] == null ? '' : r[i]));
+  for (let i = 0; i < TASK_HEAD.length; i++) out.push(r[i] instanceof Date ? dateCell_(r[i]) : (r[i] == null ? '' : r[i]));
   return out;
 }
 
@@ -774,7 +777,8 @@ function newId_() { return Utilities.getUuid().slice(0, 8); }
 /* 여러 날짜 표기를 "YYYY-MM-DD" 또는 "YYYY-MM-DD HH:mm"으로 */
 function normDue_(d) {
   if (!d) return '';
-  if (d instanceof Date) return fmt_(d);
+  if (d instanceof Date) return dateCell_(d);
+  if (/^\d{4}-\d{2}-\d{2} 00:00$/.test(String(d).trim())) return String(d).trim().slice(0, 10);   // 자정 = 시트 자동 변환 흔적 → 날짜만
   const s = String(d).trim();
   const m = /(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})일?(?:[T\s]+(?:(오전|오후)\s*)?(\d{1,2})(?::(\d{2})|시(?:\s*(\d{1,2})분?)?))?/.exec(s);
   if (!m) return '';
