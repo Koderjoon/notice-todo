@@ -40,7 +40,8 @@ const TASK_HEAD = ['id', 'title', 'due', 'room', 'detail', 'status', 'created', 
 const HIDDEN_HEAD = ['src', 'titleKey', 'dueDate', 'title', 'created'];
 const SH_SUP = 'supplies';
 const SUP_HEAD = ['id', 'subject', 'date', 'items', 'detail', 'room', 'status', 'updated', 'source', 'src'];
-const HEADS = { tasks: TASK_HEAD, hidden: HIDDEN_HEAD, supplies: SUP_HEAD };
+const SH_STATE = 'roomstate';
+const HEADS = { tasks: TASK_HEAD, hidden: HIDDEN_HEAD, supplies: SUP_HEAD, roomstate: ['room', 'seen', 'updated'] };
 
 /* ---------- 최초 1회(그리고 이번 업데이트 후 1회) 실행 ---------- */
 function setup() {
@@ -356,6 +357,10 @@ function processExports() {
 }
 
 /* 한 방의 자동 항목을 최근 공지로 통째로 다시 만듦. AI가 끝까지 성공했을 때만 교체 */
+/* 한 방의 자동 항목 갱신.
+ * - 지난번에 읽은 메시지가 그대로면: 새로 올라온 메시지만 AI가 읽고 기존 목록을 고침(증분)
+ * - 지난번 메시지 중 삭제·수정된 게 있거나 처음이면: 최근 공지로 목록을 처음부터 다시 만듦
+ * - AI가 끝까지 성공했을 때만 교체(실패하면 기존 목록 유지) */
 function rebuildRoom_(room, messages) {
   const since = Date.now() - CONFIG.REBUILD_DAYS * 864e5;
   const msgs = messages.filter(function (m) {
@@ -366,14 +371,37 @@ function rebuildRoom_(room, messages) {
     if (/^(사진|동영상|이모티콘|파일|사진 \d+장|음성메시지)$/.test(s)) return false;
     return true;
   }).map(function (m) {
-    return { room: room, sender: m.sender, time: fmt_(m.time), text: m.text,
-             key: [room, fmt_(m.time), m.sender, norm_(m.text).slice(0, 20)].join('|') };
+    const key = [room, fmt_(m.time), m.sender, norm_(m.text).slice(0, 20)].join('|');
+    return { room: room, sender: m.sender, time: fmt_(m.time), text: m.text, key: key,
+             h: fmt_(m.time) + '|' + shortHash_(m.sender + '|' + m.text) };
   });
 
-  let list = [];
+  // 지난번 상태와 비교
+  const prev = loadRoomState_(room);
+  const cutoff = fmt_(new Date(since));
+  const cur = {};
+  msgs.forEach(function (m) { cur[m.h] = true; });
+  let full = !prev || CONFIG.SUPPLIES;
+  let reason = !prev ? '처음 정리' : '';
+  if (prev) {
+    const gone = prev.filter(function (h) { return h.slice(0, 16) >= cutoff && !cur[h]; });
+    if (gone.length) { full = true; reason = '삭제·수정된 메시지 ' + gone.length + '개'; }
+  }
+  const seen = {};
+  (prev || []).forEach(function (h) { seen[h] = true; });
+  const todo = full ? msgs : msgs.filter(function (m) { return !seen[m.h]; });
+
+  if (!full && !todo.length) {
+    PropertiesService.getScriptProperties().setProperty('lastSync', fmt_(new Date()));
+    return room + ': 새 메시지 없음 (변경 없음)';
+  }
+
+  let list = full ? [] : readTasks_().filter(function (t) {
+    return t.source !== 'manual' && t.room === room && t.status === 'open';
+  });
   let slist = [];
-  for (let i = 0; i < msgs.length; i += CONFIG.BATCH) {
-    const batch = msgs.slice(i, i + CONFIG.BATCH).map(function (m, j) { m.i = j; return m; });
+  for (let i = 0; i < todo.length; i += CONFIG.BATCH) {
+    const batch = todo.slice(i, i + CONFIG.BATCH).map(function (m, j) { m.i = j; return m; });
     let result;
     try {
       result = callLLM_(buildPrompt_(list.map(taskForPrompt_), batch, slist.map(supplyForPrompt_)));
@@ -385,13 +413,47 @@ function rebuildRoom_(room, messages) {
     if (CONFIG.SUPPLIES) slist = applySupplyOpsMem_(slist, result.ops || [], batch, room);
   }
 
-  writeAutoTasks_(room, list.filter(function (t) { return t.status === 'open' && t.due; }));
+  const open = list.filter(function (t) { return t.status === 'open' && t.due; });
+  writeAutoTasks_(room, open);
   if (CONFIG.SUPPLIES) writeAutoSupplies_(room, slist.filter(function (x) { return x.status === 'open' && x.items; }));
+  saveRoomState_(room, msgs.map(function (m) { return m.h; }));
   PropertiesService.getScriptProperties().setProperty('lastSync', fmt_(new Date()));
   CacheService.getScriptCache().remove('page');
-  return (room + ': 최근 ' + CONFIG.REBUILD_DAYS + '일 공지 ' + msgs.length + '개 → 일정 ' +
-              list.filter(function (t) { return t.status === 'open' && t.due; }).length + '개' +
-              (CONFIG.SUPPLIES ? ', 준비물 ' + slist.filter(function (x) { return x.status === 'open'; }).length + '개' : '') + '로 다시 만듦');
+  return full
+    ? room + ': ' + reason + ' → 최근 ' + CONFIG.REBUILD_DAYS + '일 공지 ' + msgs.length + '개로 다시 만듦, 일정 ' + open.length + '개'
+    : room + ': 새 메시지 ' + todo.length + '개만 반영, 일정 ' + open.length + '개';
+}
+
+/* 방별로 '지난번에 읽은 메시지' 목록 보관 (시트 roomstate) */
+function shortHash_(s) {
+  return Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, s, Utilities.Charset.UTF_8)).slice(0, 10);
+}
+function loadRoomState_(room) {
+  const vals = sheet_(SH_STATE).getDataRange().getValues();
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][0]) === room && vals[i][1]) {
+      try { return JSON.parse(String(vals[i][1])); } catch (e) { return null; }
+    }
+  }
+  return null;
+}
+function saveRoomState_(room, hashes) {
+  const sh = sheet_(SH_STATE);
+  const vals = sh.getDataRange().getValues();
+  const data = JSON.stringify(hashes);
+  if (data.length > 45000) return;      // 셀 용량 초과 시 저장 안 함 → 다음엔 처음부터 다시 만듦
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][0]) === room) {
+      sh.getRange(i + 1, 2, 1, 2).setNumberFormat('@').setValues([[data, fmt_(new Date())]]);
+      return;
+    }
+  }
+  appendText_(sh, [room, data, fmt_(new Date())]);
+}
+/* 처음부터 다시 만들고 싶을 때 실행 (방별 기록 삭제) */
+function resetRoomState() {
+  const sh = sheet_(SH_STATE);
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 3).clearContent();
 }
 
 function taskForPrompt_(t) { return { id: t.id, title: t.title, due: t.due || null, detail: t.detail }; }
@@ -519,6 +581,10 @@ function buildPrompt_(known, msgs, knownSup) {
     '- 날짜는 있는데 시각만 정해지지 않았으면("시간 추후", "시간 미정", "시간은 추후 공지") 반드시 날짜만으로 add 하고 detail 맨 앞에 "시각 추후 공지"라고 적어라.',
     '- "11/2", "11/2월", "11.2(월)", "11월 2일"처럼 쓰인 것은 모두 날짜다. 연도가 없으면 메시지 time에 가장 가까운 미래 날짜로 정하라.',
     '- 한 메시지 안에 여러 일정이 섞여 있으면(예: 실습 공지 끝에 붙은 검사·제출·재검 안내) 하나도 빠뜨리지 말고 각각 add 하라.',
+    '- 공지에 조별 명단·번호·담당자 이름이 길게 섞여 있어도, 학생들이 기한까지 해야 할 일(점검·확인·제출·신청·준비 등)이 있으면 반드시 add 하라. 명단 때문에 단순 안내로 판단하지 마라.',
+    '- 번호 목록(1. 2. 3. …)으로 된 점검·준비 항목은 하나의 할 일로 묶어 add 하고, 항목 요약은 detail에 적어라. 담당자에게 알리라는 지시도 detail에 포함하라.',
+    '- "이번주 ○요일", "다음주 ○요일", "○요일까지"는 그 메시지의 time 날짜를 기준으로 계산하라. 이번주 = 메시지가 올라온 날이 속한 월~일 주.',
+    '- 기존 목록에 있는 항목은 다시 add 하지 마라. 새 메시지가 기존 항목을 바꾸거나(시간 변경·연기) 취소하면 update/cancel 하라.',
     '- 제출·신청류는 마감 시각을, 실습·시험·행사류는 시작 시각을 due로 한다. "오후 6시"→18:00, "자정까지"→23:59, "정오"→12:00.',
     '- 준비물·지참물·장소·대상(조, 번호)은 따로 add 하지 말고 해당 일정의 detail에 넣어라.',
     '- 무시: 인사, "넵/확인했습니다" 같은 답장, 행동이 필요 없는 단순 안내.',
