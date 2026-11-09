@@ -272,6 +272,7 @@ function pageData_() {
     supplies: CONFIG.SUPPLIES ? supplies : [],
     labs: CONFIG.SUPPLIES ? CONFIG.LABS : null,
     rooms: CONFIG.ROOMS,
+    polls: openPolls_(tasks),
     lastSync: PropertiesService.getScriptProperties().getProperty('lastSync') || '',
     now: fmt_(new Date())
   };
@@ -363,6 +364,7 @@ function processExports() {
  * - AI가 끝까지 성공했을 때만 교체(실패하면 기존 목록 유지) */
 function rebuildRoom_(room, messages) {
   const since = Date.now() - CONFIG.REBUILD_DAYS * 864e5;
+  savePolls_(room, messages, since);
   const msgs = messages.filter(function (m) {
     if (m.time.getTime() < since) return false;
     const s = m.text.trim();
@@ -457,6 +459,40 @@ function rebuildRoom_(room, messages) {
 }
 
 /* 방별로 '지난번에 읽은 메시지' 목록 보관 (시트 roomstate) */
+/* 카톡 톡게시판 투표: 내보내기 파일엔 마감 시각이 없어서, 시작~종료 기록으로 '진행 중'만 추적 */
+function savePolls_(room, messages, since) {
+  const polls = {};
+  messages.forEach(function (m) {
+    if (m.time.getTime() < since) return;
+    const t = m.text.trim();
+    let r;
+    if ((r = /^톡게시판 '투표': ?([\s\S]+)$/.exec(t))) {
+      polls[r[1].trim()] = { title: r[1].trim(), room: room, since: fmt_(m.time), soon: false, closed: false };
+    } else if ((r = /^톡게시판 '투표 종료 전 알림': ?([\s\S]+)$/.exec(t))) {
+      const k = r[1].trim();
+      polls[k] = polls[k] || { title: k, room: room, since: fmt_(m.time), closed: false };
+      polls[k].soon = fmt_(m.time);
+    } else if ((r = /^톡게시판 '투표 종료': ?([\s\S]+)$/.exec(t))) {
+      if (polls[r[1].trim()]) polls[r[1].trim()].closed = true;
+    }
+  });
+  const open = Object.keys(polls).map(function (k) { return polls[k]; }).filter(function (p) { return !p.closed; });
+  PropertiesService.getScriptProperties().setProperty('polls_' + room, JSON.stringify(open).slice(0, 8000));
+}
+function openPolls_(tasks) {
+  const props = PropertiesService.getScriptProperties();
+  let out = [];
+  CONFIG.ROOMS.forEach(function (room) {
+    try { out = out.concat(JSON.parse(props.getProperty('polls_' + room) || '[]')); } catch (e) {}
+  });
+  // 같은 투표가 날짜 있는 일정으로 이미 잡혀 있으면 빼기
+  return out.filter(function (p) {
+    return !tasks.some(function (t) {
+      return /투표/.test(t.title) && similarTask_({ title: t.title, due: 'x' }, { title: p.title + ' 투표', due: 'x' });
+    });
+  });
+}
+
 function shortHash_(s) {
   return Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, s, Utilities.Charset.UTF_8)).slice(0, 10);
 }
@@ -608,7 +644,9 @@ function buildPrompt_(known, msgs, knownSup) {
     '현재 시각(KST): ' + fmt_(new Date()),
     '',
     '## 규칙',
-    '- 대상: 제출·과제·신청·설문·서명·납부 마감, 실습/시험/특강/행사 일정, 출결 관련 지시.',
+    '- 대상: 마감기한이나 날짜가 있는 모든 것. 제출·과제·레포트·자체평가, 검사·재검, 신청·접수·참가 신청, 설문·수요조사·링크/시트 작성, 투표, 공동구매·주문, 회비·납부·환불, 서명·확인, 댓글/선착순 신청, 사진·서류 제출, 실습/시험/특강/학회/행사 일정, 출결 관련 지시.',
+    '- 희망자만 하는 것(선택 사항)이라도 마감이 있으면 add 하고 detail 맨 앞에 "희망자만"이라고 적어라.',
+    '- 투표 안내(예: "○일 ○시까지 투표 부탁드립니다")는 "○○ 투표" 제목으로 add 하라. "톡게시판 \'투표\'" 같은 시스템 줄은 날짜가 없으면 무시해도 된다(따로 처리함).',
     '- 날짜가 명확히 제시된 것만 add 하라. "추후 공지", "곧", "빠른 시일 내" 처럼 날짜 자체를 특정할 수 없으면 add 하지 마라.',
     '- 날짜는 있는데 시각만 정해지지 않았으면("시간 추후", "시간 미정", "시간은 추후 공지") 반드시 날짜만으로 add 하고 detail 맨 앞에 "시각 추후 공지"라고 적어라.',
     '- "11/2", "11/2월", "11.2(월)", "11월 2일"처럼 쓰인 것은 모두 날짜다. 연도가 없으면 메시지 time에 가장 가까운 미래 날짜로 정하라.',
@@ -621,7 +659,7 @@ function buildPrompt_(known, msgs, knownSup) {
     '- 기존 목록에 있는 항목은 다시 add 하지 마라. 새 메시지가 기존 항목을 바꾸거나(시간 변경·연기) 취소하면 update/cancel 하라.',
     '- 제출·신청류는 마감 시각을, 실습·시험·행사류는 시작 시각을 due로 한다. "오후 6시"→18:00, "자정까지"→23:59, "정오"→12:00.',
     '- 준비물·지참물·장소·대상(조, 번호)은 따로 add 하지 말고 해당 일정의 detail에 넣어라.',
-    '- 무시: 인사, "넵/확인했습니다" 같은 답장, 행동이 필요 없는 단순 안내.',
+    '- 무시: 인사, "넵/확인했습니다" 같은 답장, 날짜도 할 일도 없는 단순 안내. 애매하면 무시하지 말고 add 하라.',
     '- "내일", "다음 주 화요일", "이번 주 금요일까지" 같은 상대 날짜는 해당 메시지의 time 기준으로 절대 날짜로 바꿔라.',
     '- due 형식: 시각이 있으면 "YYYY-MM-DD HH:mm"(24시간제), 날짜만 있으면 "YYYY-MM-DD".',
     '- 기존 목록에 이미 있는 일을 다시 언급·변경·연기하면 add 하지 말고 update(id 사용). 취소되면 cancel.',

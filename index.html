@@ -219,6 +219,18 @@
 
     var labels = [['today', '오늘'], ['tomorrow', '내일'], ['week', '7일 이내'], ['later', '그 이후']];
     var html = '';
+    var polls = DATA.polls || [];
+    if (polls.length) {                       // 카톡 투표: 마감 시각을 알 수 없어 '진행 중'으로만 표시
+      html += '<section><h2>진행 중인 투표 · ' + polls.length + '</h2>';
+      polls.forEach(function (p) {
+        html += '<div class="item"><div class="when"><div class="md" style="font-size:15px">투표</div>' +
+                (p.soon ? '<div class="dd hot">곧 마감</div>' : '<div class="wd">진행 중</div>') + '</div>' +
+                '<div class="body"><div class="title">' + esc(p.title) + '</div>' +
+                '<div class="time"><span class="none">마감 시각은 카톡 톡게시판에서 확인 · ' + esc(String(p.since).slice(5)) + ' 시작</span></div>' +
+                '<div class="tags"><span class="tag">' + esc(p.room) + '</span></div></div></div>';
+      });
+      html += '</section>';
+    }
     labels.forEach(function (l) {
       var arr = groups[l[0]].sort(function (a, b) { return a._d.end - b._d.end; });
       if (!arr.length) return;
