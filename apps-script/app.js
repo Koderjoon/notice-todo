@@ -279,16 +279,16 @@ function pageData_() {
 
 /* 직접 입력한 일정과 같은 날짜·비슷한 제목의 자동 항목은 중복이므로 숨김 */
 function dupOfManual_(t, manual) {
-  const day = String(t.due).slice(0, 10);
-  const a = bigrams_(titleKey_(t.title));
-  return manual.some(function (m) {
-    if (String(m.due).slice(0, 10) !== day) return false;
-    const b = bigrams_(titleKey_(m.title));
-    if (!a.length || !b.length) return false;
-    let same = 0;
-    a.forEach(function (x) { if (b.indexOf(x) !== -1) same++; });
-    return same / Math.min(a.length, b.length) >= 0.6;
-  });
+  return manual.some(function (m) { return similarTask_(t, m); });
+}
+/* 같은 날짜 + 제목이 비슷하면 같은 일정으로 봄 */
+function similarTask_(a, b) {
+  if (String(a.due).slice(0, 10) !== String(b.due).slice(0, 10)) return false;
+  const x = bigrams_(titleKey_(a.title)), y = bigrams_(titleKey_(b.title));
+  if (!x.length || !y.length) return false;
+  let same = 0;
+  x.forEach(function (g) { if (y.indexOf(g) !== -1) same++; });
+  return same / Math.min(x.length, y.length) >= 0.6;
 }
 function bigrams_(s) { const out = []; for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2)); return out; }
 
@@ -391,8 +391,13 @@ function rebuildRoom_(room, messages) {
   (prev || []).forEach(function (h) { seen[h] = true; });
   const todo = full ? msgs : msgs.filter(function (m) { return !seen[m.h]; });
 
-  if (!full && !todo.length) {
-    PropertiesService.getScriptProperties().setProperty('lastSync', fmt_(new Date()));
+  const props = PropertiesService.getScriptProperties();
+  const today = fmt_(new Date()).slice(0, 10);
+  const sweepKey = 'sweep_' + room;
+  const needSweep = !full && props.getProperty(sweepKey) !== today;   // 하루 한 번 놓친 항목 재확인
+
+  if (!full && !todo.length && !needSweep) {
+    props.setProperty('lastSync', fmt_(new Date()));
     return room + ': 새 메시지 없음 (변경 없음)';
   }
 
@@ -413,15 +418,42 @@ function rebuildRoom_(room, messages) {
     if (CONFIG.SUPPLIES) slist = applySupplyOpsMem_(slist, result.ops || [], batch, room);
   }
 
+  // 하루 한 번: 최근 공지 전체를 다시 훑되, 기존 목록에 '없는 것만' 추가 (기존 항목은 건드리지 않음)
+  let swept = -1;
+  if (needSweep) {
+    swept = 0;
+    let ok = true;
+    for (let i = 0; i < msgs.length && ok; i += CONFIG.BATCH) {
+      const batch = msgs.slice(i, i + CONFIG.BATCH).map(function (m, j) { m.i = j; return m; });
+      try {
+        const r = callLLM_(buildPrompt_(list.map(taskForPrompt_), batch, []));
+        const adds = (r.ops || []).filter(function (op) {
+          if (op.op !== 'add' || !op.title) return false;
+          const due = normDue_(op.due);
+          return due && !list.some(function (t) { return t.status === 'open' && similarTask_(t, { title: op.title, due: due }); });
+        });
+        const before = list.length;
+        list = applyOpsMem_(list, adds, batch, room);
+        swept += list.length - before;
+      } catch (err) {
+        console.warn(room + ' 재확인 중 오류(다음에 다시 시도): ' + err);
+        ok = false;
+      }
+    }
+    if (ok) props.setProperty(sweepKey, today);
+  }
+
   const open = list.filter(function (t) { return t.status === 'open' && t.due; });
   writeAutoTasks_(room, open);
   if (CONFIG.SUPPLIES) writeAutoSupplies_(room, slist.filter(function (x) { return x.status === 'open' && x.items; }));
   saveRoomState_(room, msgs.map(function (m) { return m.h; }));
   PropertiesService.getScriptProperties().setProperty('lastSync', fmt_(new Date()));
   CacheService.getScriptCache().remove('page');
-  return full
+  if (full) props.setProperty(sweepKey, today);   // 처음부터 만든 날은 재확인 불필요
+  return (full
     ? room + ': ' + reason + ' → 최근 ' + CONFIG.REBUILD_DAYS + '일 공지 ' + msgs.length + '개로 다시 만듦, 일정 ' + open.length + '개'
-    : room + ': 새 메시지 ' + todo.length + '개만 반영, 일정 ' + open.length + '개';
+    : room + ': 새 메시지 ' + todo.length + '개 반영, 일정 ' + open.length + '개') +
+    (swept >= 0 ? ' (오늘의 재확인: 놓친 일정 ' + swept + '개 추가)' : '');
 }
 
 /* 방별로 '지난번에 읽은 메시지' 목록 보관 (시트 roomstate) */
@@ -581,6 +613,8 @@ function buildPrompt_(known, msgs, knownSup) {
     '- 날짜는 있는데 시각만 정해지지 않았으면("시간 추후", "시간 미정", "시간은 추후 공지") 반드시 날짜만으로 add 하고 detail 맨 앞에 "시각 추후 공지"라고 적어라.',
     '- "11/2", "11/2월", "11.2(월)", "11월 2일"처럼 쓰인 것은 모두 날짜다. 연도가 없으면 메시지 time에 가장 가까운 미래 날짜로 정하라.',
     '- 한 메시지 안에 여러 일정이 섞여 있으면(예: 실습 공지 끝에 붙은 검사·제출·재검 안내) 하나도 빠뜨리지 말고 각각 add 하라.',
+    '- 한두 줄짜리 짧은 공지도 놓치지 마라. "검사", "제출", "확인", "재검" 같은 말과 날짜·시각(또는 "○○까지")이 함께 있으면 반드시 add 하라.',
+    '- "○일 ○시까지 기공실(실습실) 이용", "○시까지 완료" 처럼 검사·과제 공지에 붙은 시각은 그 일을 끝내야 하는 마감으로 보고 due에 넣어라.',
     '- 공지에 조별 명단·번호·담당자 이름이 길게 섞여 있어도, 학생들이 기한까지 해야 할 일(점검·확인·제출·신청·준비 등)이 있으면 반드시 add 하라. 명단 때문에 단순 안내로 판단하지 마라.',
     '- 번호 목록(1. 2. 3. …)으로 된 점검·준비 항목은 하나의 할 일로 묶어 add 하고, 항목 요약은 detail에 적어라. 담당자에게 알리라는 지시도 detail에 포함하라.',
     '- "이번주 ○요일", "다음주 ○요일", "○요일까지"는 그 메시지의 time 날짜를 기준으로 계산하라. 이번주 = 메시지가 올라온 날이 속한 월~일 주.',
