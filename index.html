@@ -323,6 +323,7 @@
     var time = t._d.hm ? '<b>' + t._d.hm + '</b>' + (t._diff === 0 ? ' 까지' : '')
                        : '<span class="none">시각 미정 (당일 중)</span>';
     var tags = (t.room ? '<span class="tag">' + esc(t.room) + '</span>' : '') +
+               (t.repeat === 'weekly' ? '<span class="tag">매주 반복</span>' : '') +
                (t.manual ? '<span class="tag mine">직접 입력</span>' : '');
     var acts = DATA.admin ? '<div class="acts"><button onclick="openEdit(\'' + esc(t.id) + '\')">수정</button>' +
                '<button onclick="del(\'' + esc(t.id) + '\')">삭제</button></div>' : '';

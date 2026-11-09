@@ -40,7 +40,7 @@ const CONFIG = {
 const TZ = 'Asia/Seoul';
 const SH_TASK = 'tasks';
 const SH_HIDDEN = 'hidden';
-const TASK_HEAD = ['id', 'title', 'due', 'room', 'detail', 'status', 'created', 'updated', 'source', 'src'];
+const TASK_HEAD = ['id', 'title', 'due', 'room', 'detail', 'status', 'created', 'updated', 'source', 'src', 'repeat'];
 const HIDDEN_HEAD = ['src', 'titleKey', 'dueDate', 'title', 'created'];
 const SH_SUP = 'supplies';
 const SUP_HEAD = ['id', 'subject', 'date', 'items', 'detail', 'room', 'status', 'updated', 'source', 'src'];
@@ -255,13 +255,14 @@ function pageData_() {
   });
   const tasks = all.filter(function (t) {
     if (t.status !== 'open') return false;
+    if (t.source !== 'manual' && (isHidden_(t, hidden) || dupOfManual_(t, manual))) return false;
+    if (t.repeat === 'weekly') t.due = nextWeekly_(t.due, now);   // 매주 반복: 다음 마감으로
     const end = dueEnd_(t.due);
-    if (!end || end.getTime() < now) return false;          // 마감이 명확하고 아직 안 지난 것만
-    if (t.source === 'manual') return true;
-    return !isHidden_(t, hidden) && !dupOfManual_(t, manual);
+    return !!end && end.getTime() >= now;                     // 마감이 명확하고 아직 안 지난 것만
   }).sort(function (a, b) { return dueEnd_(a.due) - dueEnd_(b.due); })
     .map(function (t) {
-      return { id: t.id, title: t.title, due: t.due, room: t.room, detail: t.detail, manual: t.source === 'manual' };
+      return { id: t.id, title: t.title, due: t.due, room: t.room, detail: t.detail, manual: t.source === 'manual',
+               repeat: t.repeat || '' };
     });
   const today = fmt_(new Date()).slice(0, 10);
   const supplies = readSupplies_().filter(function (x) {
@@ -283,6 +284,16 @@ function pageData_() {
 }
 
 /* 직접 입력한 일정과 같은 날짜·비슷한 제목의 자동 항목은 중복이므로 숨김 */
+/* 매주 반복 마감: 지났으면 7일씩 밀어서 다음 마감을 돌려줌 */
+function nextWeekly_(due, now) {
+  let end = dueEnd_(due);
+  if (!end) return due;
+  const time = String(due).slice(10);   // ' HH:mm' 또는 ''
+  let guard = 0;
+  while (end.getTime() < now && guard++ < 200) end = new Date(end.getTime() + 7 * 864e5);
+  return fmt_(end).slice(0, 10) + time;
+}
+
 function dupOfManual_(t, manual) {
   return manual.some(function (m) { return similarTask_(t, m); });
 }
@@ -537,7 +548,7 @@ function applyOpsMem_(list, ops, batch, room) {
       const due = normDue_(op.due);
       if (!due) return;
       const src = batch[Number(op.src)] ? batch[Number(op.src)].key : '';
-      list.push({ id: newId_(), title: String(op.title).slice(0, 60), due: due, room: room,
+      list.push({ id: newId_(), title: String(op.title).slice(0, 60), due: due, room: room, repeat: op.repeat === 'weekly' ? 'weekly' : '',
                   detail: String(op.detail || ''), status: 'open', created: now, updated: now,
                   source: 'auto', src: src });
     } else if (op.op === 'update') {
@@ -618,7 +629,7 @@ function writeAutoTasks_(room, newTasks) {
       keep.push(pad_(vals[i]));
     }
     newTasks.forEach(function (t) {
-      keep.push([t.id, t.title, t.due, t.room, t.detail, 'open', t.created, t.updated, 'auto', t.src]);
+      keep.push([t.id, t.title, t.due, t.room, t.detail, 'open', t.created, t.updated, 'auto', t.src, t.repeat === 'weekly' ? 'weekly' : '']);
     });
     if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, TASK_HEAD.length).clearContent();
     if (keep.length) sh.getRange(2, 1, keep.length, TASK_HEAD.length).setNumberFormat('@').setValues(keep);
@@ -650,6 +661,7 @@ function buildPrompt_(known, msgs, knownSup) {
     '## 규칙',
     '- 대상: 마감기한이나 날짜가 있는 모든 것. 제출·과제·레포트·자체평가, 검사·재검, 신청·접수·참가 신청, 설문·수요조사·링크/시트 작성, 투표, 공동구매·주문, 회비·납부·환불, 서명·확인, 댓글/선착순 신청, 사진·서류 제출, 실습/시험/특강/학회/행사 일정, 출결 관련 지시.',
     '- 희망자만 하는 것(선택 사항)이라도 마감이 있으면 add 하고 detail 맨 앞에 "희망자만"이라고 적어라.',
+    '- "매주 ○요일까지", "매주 ○요일 ○시"처럼 매주 반복되는 마감은 메시지 time 이후 처음 오는 그 요일을 due로 add 하고 "repeat":"weekly"를 넣어라.',
     '- 투표 안내(예: "○일 ○시까지 투표 부탁드립니다")는 "○○ 투표" 제목으로 add 하라. "톡게시판 \'투표\'" 같은 시스템 줄은 날짜가 없으면 무시해도 된다(따로 처리함).',
     '- 날짜가 명확히 제시된 것만 add 하라. "추후 공지", "곧", "빠른 시일 내" 처럼 날짜 자체를 특정할 수 없으면 add 하지 마라.',
     '- 날짜는 있는데 시각만 정해지지 않았으면("시간 추후", "시간 미정", "시간은 추후 공지") 반드시 날짜만으로 add 하고 detail 맨 앞에 "시각 추후 공지"라고 적어라.',
@@ -673,7 +685,7 @@ function buildPrompt_(known, msgs, knownSup) {
     '',
     ...supRules,
     '## 출력 (JSON만, 설명 금지)',
-    '{"ops":[{"op":"add","src":0,"title":"","due":"","detail":""},{"op":"update","id":"","title":"","due":"","detail":""},{"op":"cancel","id":""}' +
+    '{"ops":[{"op":"add","src":0,"title":"","due":"","detail":"","repeat":""},{"op":"update","id":"","title":"","due":"","detail":""},{"op":"cancel","id":""}' +
       (on ? ',\n {"op":"supply","src":0,"subject":"","date":null,"items":"","detail":""},{"op":"supply_update","id":"","date":null,"items":"","detail":""},{"op":"supply_cancel","id":""}' : '') + ']}',
     '없으면 {"ops":[]}',
     '',
@@ -868,7 +880,7 @@ function appendText_(sh, row) {
 function rowToTask_(r) {
   return { id: String(r[0]), title: String(r[1]), due: normDue_(dateCell_(r[2])), room: String(r[3] || ''),
            detail: String(r[4] || ''), status: String(r[5] || 'open'), created: cell_(r[6]), updated: cell_(r[7]),
-           source: String(r[8] || 'auto'), src: String(r[9] || '') };
+           source: String(r[8] || 'auto'), src: String(r[9] || ''), repeat: String(r[10] || '') };
 }
 
 function readTasks_() {
