@@ -14,7 +14,11 @@
  ******************************************************/
 
 const CONFIG = {
-  ROOMS: ['25 실습공지', '전남대치전원 25 공지방'],   // 카톡 방 이름 그대로
+  ROOMS: ['25 실습공지', '전남대치전원 25 공지방'],   // 카톡 방 이름 그대로 (화면 표시·기록용 이름)
+  // 카톡 방 이름이 바뀌어도 같은 방으로 인식: '바뀐 이름': '원래 이름'
+  ROOM_ALIASES: {
+    '25 공지방': '전남대치전원 25 공지방',
+  },
   LLM: 'gemini',                                 // 'gemini' 또는 'claude'
   GEMINI_MODEL: 'gemini-flash-lite-latest',
   GEMINI_FALLBACKS: ['gemini-2.5-flash', 'gemini-flash-latest'],   // 붐빌 때 차례로 시도
@@ -806,8 +810,13 @@ function parseKakaoExport_(text, fileName) {
   const head = lines.slice(0, 3).join('\n');
   let room = '';
   const nsp = function (s) { return String(s || '').replace(/[\s_]+/g, ''); };   // 띄어쓰기·밑줄 차이 무시
-  CONFIG.ROOMS.forEach(function (r) {
-    if (!room && (nsp(head).indexOf(nsp(r)) !== -1 || nsp(fileName).indexOf(nsp(r)) !== -1)) room = r;
+  // 원래 이름 + 바뀐 이름 후보를 긴 것부터 비교 (짧은 이름이 긴 이름 안에 들어 있는 경우 대비)
+  const aliases = CONFIG.ROOM_ALIASES || {};
+  const cands = CONFIG.ROOMS.map(function (r) { return [r, r]; })
+    .concat(Object.keys(aliases).map(function (a) { return [a, aliases[a]]; }))
+    .sort(function (x, y) { return nsp(y[0]).length - nsp(x[0]).length; });
+  cands.forEach(function (c) {
+    if (!room && (nsp(head).indexOf(nsp(c[0])) !== -1 || nsp(fileName).indexOf(nsp(c[0])) !== -1)) room = c[1];
   });
 
   const reMobile = /^(\d{4})[년.]\s*(\d{1,2})[월.]\s*(\d{1,2})[일.]?\s*(오전|오후)\s*(\d{1,2}):(\d{2}),\s*(.+?)\s:\s([\s\S]*)$/;
